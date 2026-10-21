@@ -1025,7 +1025,7 @@ button {
 
 .publico {
     display: grid;
-    min-height: calc(100dvh - 2.75rem);
+    min-height: 100dvh;
 }
 
 .publico-marca {
@@ -1240,7 +1240,7 @@ button {
 /* ------------------------------------------------------- área interna */
 
 .shell {
-    min-height: calc(100dvh - 2.75rem);
+    min-height: 100dvh;
 }
 
 /* Celular: topo com a marca e o avatar; o menu vira gaveta e há uma barra inferior. */
