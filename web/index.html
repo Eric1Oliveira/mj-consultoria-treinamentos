@@ -4,10 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!-- Só arquivos deste próprio site; a única exceção são os vídeos do YouTube em modo de privacidade (frame-src). -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; base-uri 'self'; form-action 'self'; object-src 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://ehhksabwmdtpeyxxorwn.supabase.co; frame-src https://www.youtube-nocookie.com; base-uri 'self'; form-action 'self'; object-src 'none'">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="color-scheme" content="light dark">
-    <meta name="description" content="Plataforma de treinamentos corporativos — demonstração.">
+    <meta name="theme-color" content="#071a20">
+    <meta name="description" content="Plataforma de treinamentos corporativos.">
     <title>MJ Consultoria</title>
     <link rel="icon" href="img/icone.svg" type="image/svg+xml">
     <link rel="preload" href="fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -18,8 +19,6 @@
 <body>
     <a class="pular" href="#conteudo" data-pular>Pular para o conteúdo</a>
 
-    <!-- Identifica a demonstração em todas as telas; o conteúdo vem de app.js. -->
-    <section id="faixa-demo" class="faixa-demo" aria-label="Modo demonstração"></section>
 
     <div id="app">
         <p class="carregando-inicial">Carregando…</p>
@@ -29,19 +28,9 @@
     <div id="aviso" class="sr-only" role="status" aria-live="polite"></div>
     <div id="aviso-visual" class="aviso" aria-hidden="true" hidden></div>
 
-    <dialog id="dialogo-restaurar" class="dialogo" aria-labelledby="restaurar-titulo" aria-describedby="restaurar-texto">
-        <form method="dialog">
-            <h2 id="restaurar-titulo" class="dialogo-titulo" data-texto="titulo"></h2>
-            <p id="restaurar-texto" class="dialogo-texto" data-texto="corpo"></p>
-            <div class="dialogo-acoes">
-                <button type="submit" value="cancelar" class="botao botao--secundario" data-texto="cancelar" autofocus></button>
-                <button type="submit" value="confirmar" class="botao botao--perigo" data-texto="confirmar"></button>
-            </div>
-        </form>
-    </dialog>
 
     <noscript>
-        <p class="sem-js">Esta demonstração precisa de JavaScript ativado.</p>
+        <p class="sem-js">Esta plataforma precisa de JavaScript ativado.</p>
     </noscript>
 </body>
 </html>

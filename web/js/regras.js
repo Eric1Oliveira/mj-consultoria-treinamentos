@@ -52,6 +52,10 @@ export function pode(usuario, acao, alvo = {}) {
             return true;
         case 'gerir-cursos':
             return ehEquipe(perfil);
+        case 'personalizar-marca':
+            if (ehEquipe(perfil)) return true;
+            return perfil === 'company_admin'
+                && (alvo.empresaId === undefined || alvo.empresaId === usuario.empresaId);
         case 'convidar':
             return podeConvidar(usuario, alvo.perfil, alvo.empresa ?? null);
         case 'gerir-pessoa':
@@ -163,9 +167,82 @@ export function corLegivel(hex) {
     return corValida(hex) && contrasteComBranco(hex) >= 4.5;
 }
 
-/** Cor segura para usar na tela: inválida ou ilegível cai na cor da consultora. */
+function hexDe(canais) {
+    return `#${canais.map((c) => Math.round(Math.max(0, Math.min(255, c))).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function misturar(hex, alvo, fracao) {
+    const a = rgb(hex);
+    const b = rgb(alvo);
+    return hexDe(a.map((c, i) => c + (b[i] - c) * fracao));
+}
+
+export function contraste(hexA, hexB) {
+    const [claro, escuro] = [luminancia(hexA), luminancia(hexB)].sort((x, y) => y - x);
+    return (claro + 0.05) / (escuro + 0.05);
+}
+
+/** Leva a cor aos poucos na direção de `rumo` até ter contraste `minimo` com `fundo`. */
+function ajustarAte(hex, fundo, minimo, rumo) {
+    for (let passo = 0; passo <= 50; passo += 1) {
+        const cor = misturar(hex, rumo, passo / 50);
+        if (contraste(cor, fundo) >= minimo) return cor;
+    }
+    return rumo;
+}
+
+const TEXTO_ESCURO = '#111a1f';
+const FUNDO_ESCURO = '#10191d';
+
+/**
+ * Paleta da marca a partir de UMA cor qualquer (a empresa não precisa saber de contraste):
+ * - acao/onAcao: fundo e texto dos botões. Mantém o tom; escurece o mínimo para o texto
+ *   branco ficar legível, e em cores muito claras (amarelo, verde-limão) usa texto escuro;
+ * - tinta / tintaEscura: a cor para textos e links no fundo claro e no tema escuro;
+ * - ajustada: true quando o botão precisou de um tom levemente diferente.
+ */
+export function paletaMarca(hex) {
+    const base = corValida(hex) ? hex.toLowerCase() : COR_PADRAO;
+    let acao = base;
+    let onAcao = '#ffffff';
+    if (contrasteComBranco(base) < 4.5) {
+        if (contrasteComBranco(base) >= 2.2) acao = ajustarAte(base, '#ffffff', 4.5, '#000000');
+        else onAcao = TEXTO_ESCURO;
+    }
+    return {
+        base,
+        acao,
+        onAcao,
+        tinta: ajustarAte(base, '#ffffff', 4.5, '#000000'),
+        tintaEscura: ajustarAte(base, FUNDO_ESCURO, 4.5, '#ffffff'),
+        ajustada: acao !== base,
+    };
+}
+
+/** Cor para fundos com texto branco (avatares, selos): o tom da empresa, escurecido se preciso. */
 export function corSegura(hex) {
-    return corLegivel(hex) ? hex.toLowerCase() : COR_PADRAO;
+    if (!corValida(hex)) return COR_PADRAO;
+    return corLegivel(hex) ? hex.toLowerCase() : ajustarAte(hex.toLowerCase(), '#ffffff', 4.5, '#000000');
+}
+
+// ---------------------------------------------------------------- marca --
+
+export const ESTILOS_MENU = ['escuro', 'marca', 'claro'];
+export const CANTOS = ['suave', 'reto', 'redondo'];
+export const FONTES = ['marcante', 'classica', 'neutra'];
+
+/** Valores de marca de uma empresa, com os padrões preenchidos. */
+export function marcaDe(empresa) {
+    return {
+        cor: corValida(empresa?.cor) ? empresa.cor : null,
+        corSecundaria: corValida(empresa?.corSecundaria) ? empresa.corSecundaria : null,
+        logo: empresa?.logo ?? null,
+        academia: empresa?.academia ?? '',
+        estiloMenu: ESTILOS_MENU.includes(empresa?.estiloMenu) ? empresa.estiloMenu : 'escuro',
+        cantos: CANTOS.includes(empresa?.cantos) ? empresa.cantos : 'suave',
+        fonte: FONTES.includes(empresa?.fonte) ? empresa.fonte : 'marcante',
+        capasMarca: Boolean(empresa?.capasMarca),
+    };
 }
 
 // ------------------------------------------------------------ validações --

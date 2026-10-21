@@ -23,7 +23,7 @@ export async function tela({ parametros }) {
 
     return {
         titulo: t('convite.titulo'),
-        marca: convite.empresa?.cor,
+        empresa: convite.empresa,
         conteudo: html`<div class="login">
             <header class="cabecalho">
                 <h1 class="titulo" tabindex="-1">${t('convite.heading')}</h1>
@@ -37,8 +37,12 @@ export async function tela({ parametros }) {
             <form class="formulario" data-form="aceite" novalidate>
                 <div class="campo">
                     <label for="aceite-nome">${t('convite.nome')}</label>
-                    <input id="aceite-nome" name="nome" maxlength="120" required autocomplete="name" aria-describedby="aceite-dica">
-                    <p id="aceite-dica" class="campo-dica">${t('convite.semSenha')}</p>
+                    <input id="aceite-nome" name="nome" maxlength="120" required autocomplete="name">
+                </div>
+                <div class="campo">
+                    <label for="aceite-senha">${t('convite.senha')}</label>
+                    <input id="aceite-senha" name="senha" type="password" minlength="${dados.SENHA_MINIMA}" required autocomplete="new-password" aria-describedby="aceite-dica">
+                    <p id="aceite-dica" class="campo-dica">${t('convite.senhaDica', { min: dados.SENHA_MINIMA })}</p>
                 </div>
                 <p class="campo-erro" data-resumo-erro role="alert" hidden></p>
                 <button type="submit" class="botao botao--primario botao--largo">${t('convite.aceitar')}</button>
@@ -48,12 +52,16 @@ export async function tela({ parametros }) {
             const form = raiz.querySelector('[data-form="aceite"]');
             form.addEventListener('submit', async (evento) => {
                 evento.preventDefault();
+                const enviar = form.querySelector('[type="submit"]');
+                enviar.disabled = true;
                 try {
-                    const usuario = await dados.aceitarConvite(codigo, form.nome.value);
+                    const usuario = await dados.aceitarConvite(codigo, form.nome.value, form.senha.value);
                     anunciar(t('convite.aceito', { nome: usuario.nome }));
                     irPara('painel');
                 } catch (erro) {
                     mostrarErro(erro, form);
+                } finally {
+                    enviar.disabled = false;
                 }
             });
         },

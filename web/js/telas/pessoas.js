@@ -138,7 +138,7 @@ function previaLote(linhas) {
 
 function blocoLote() {
     return html`<details class="painel-bloco painel-bloco--recolhivel">
-        <summary class="bloco-titulo">${t('convites.loteTitulo')}</summary>
+        <summary class="bloco-titulo">${icone('users', 'icone')}<span>${t('convites.loteTitulo')}</span>${icone('arrow', 'icone icone--p recolhivel-seta')}</summary>
         <form class="formulario formulario--compacto" data-form="lote">
             <div class="campo">
                 <label for="lote-lista">${t('convites.loteRotulo')}</label>
@@ -190,7 +190,8 @@ export function linhaPessoa(usuario, p) {
         <li class="linha">
             ${avatar(p.nome)}
             <span class="linha-principal">${p.nome}${p.id === usuario.id ? html` <span class="selo selo--marca">${t('pessoas.voce')}</span>` : ''}
-                <span class="linha-sub">${p.email} · ${t(`perfis.${p.perfil}`)} · ${p.ultimoAcesso ? t('painel.ultimoAcesso', { quando: formatarRelativo(p.ultimoAcesso) }) : t('painel.nuncaEntrou')}</span>
+                <span class="linha-sub">${p.email}</span>
+                <span class="linha-sub">${t(`perfis.${p.perfil}`)} · ${p.ultimoAcesso ? t('painel.ultimoAcesso', { quando: formatarRelativo(p.ultimoAcesso) }) : t('painel.nuncaEntrou')}</span>
             </span>
             ${p.ativo ? '' : html`<span class="selo selo--neutro">${t('comum.inativo')}</span>`}
             ${gerir || mudarPerfil ? html`<span class="linha-acoes">

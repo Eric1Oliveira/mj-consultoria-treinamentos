@@ -6,7 +6,7 @@
 import * as dados from '../dados.js';
 import { ehEquipe } from '../regras.js';
 import { t, formatarData } from '../textos.js';
-import { html, icone, opcao, anunciar, irPara, mostrarErro, desenharEm, trilhaSvg } from '../app.js';
+import { html, icone, opcao, avatar, anunciar, irPara, mostrarErro, desenharEm, capa, celebrar } from '../app.js';
 
 const filtro = { busca: '' };
 
@@ -14,13 +14,6 @@ function barra(percentual, rotuloId) {
     return html`<div class="barra" role="progressbar" aria-labelledby="${rotuloId}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentual}">
         <span class="barra-preenchida" data-progresso="${percentual}"></span>
     </div>`;
-}
-
-/** Desenho da trilha com o progresso real do curso (até 6 marcos; o último é o certificado). */
-export function trilhaDoCurso(p) {
-    const marcos = Math.min(6, Math.max(2, p.total + 1));
-    const feitos = p.concluido ? marcos - 1 : Math.min(marcos - 2, Math.floor((p.feitas / Math.max(1, p.total)) * (marcos - 1)));
-    return trilhaSvg(feitos, marcos);
 }
 
 function rotuloAcao(p) {
@@ -34,14 +27,19 @@ function cartao(usuario, c, nomesEmpresas) {
     const equipe = ehEquipe(usuario.perfil);
     const p = c.progresso;
     return html`<li class="curso-cartao">
-        <div class="curso-cartao-topo">
-            <span class="curso-icone" aria-hidden="true">${icone('book')}</span>
-            ${!c.ativo ? html`<span class="selo selo--neutro">${t('cursos.inativo')}</span>` : ''}
-            ${p?.concluido ? html`<span class="selo selo--sucesso">${icone('check', 'icone icone--p')}${t('painel.concluido')}</span>` : ''}
-        </div>
+        <a class="curso-cartao-capa" href="#/cursos/${c.id}" tabindex="-1" aria-hidden="true">
+            ${capa(c, p)}
+            <span class="curso-cartao-tocar">${icone('tocar')}</span>
+            <span class="curso-cartao-selos">
+                ${!c.ativo ? html`<span class="selo selo--neutro">${t('cursos.inativo')}</span>` : ''}
+                ${p?.concluido ? html`<span class="selo selo--ouro">${icone('award', 'icone icone--p')}${t('painel.concluido')}</span>` : ''}
+            </span>
+        </a>
+        <div class="curso-cartao-corpo">
+        <p class="curso-meta curso-meta--topo">${t('cursos.resumo', { modulos: c.modulos, aulas: c.aulas, horas: c.cargaHoraria })}</p>
         <h2 class="curso-titulo">${c.titulo}</h2>
         <p class="curso-descricao">${c.descricao}</p>
-        <p class="curso-meta">${t('cursos.resumo', { modulos: c.modulos, aulas: c.aulas, horas: c.cargaHoraria })}</p>
+        ${!c.ativo || p?.concluido ? html`<p class="sr-only">${[!c.ativo ? t('cursos.inativo') : '', p?.concluido ? t('painel.concluido') : ''].filter(Boolean).join(' · ')}</p>` : ''}
         ${equipe ? html`
             <p class="curso-meta">${t('cursos.turma', { matriculados: c.matriculados, concluidos: c.concluidos })}</p>
             <p class="curso-meta">${t('cursos.liberadoPara')}: ${c.empresas.length ? c.empresas.map((id) => nomesEmpresas[id]).filter(Boolean).join(', ') : t('cursos.nenhumaEmpresa')}</p>` : ''}
@@ -51,6 +49,7 @@ function cartao(usuario, c, nomesEmpresas) {
         <div class="acoes acoes--p curso-acoes">
             <a class="botao ${equipe ? 'botao--secundario' : 'botao--primario'} botao--p" href="#/cursos/${c.id}">${equipe ? t('cursos.ver') : rotuloAcao(p)}<span class="sr-only"> – ${c.titulo}</span></a>
             ${equipe ? html`<a class="botao botao--secundario botao--p" href="#/cursos/${c.id}/editar">${t('comum.editar')}<span class="sr-only"> – ${c.titulo}</span></a>` : ''}
+        </div>
         </div>
     </li>`;
 }
@@ -98,8 +97,8 @@ async function catalogo(usuario) {
 function listaAulas(curso, aulaAtualId = null) {
     let numero = 0;
     return html`<ol class="modulos" role="list">
-        ${curso.modulos.map((m) => html`<li class="modulo">
-            <h3 class="modulo-titulo">${m.titulo}</h3>
+        ${curso.modulos.map((m, mi) => html`<li class="modulo">
+            <h3 class="modulo-titulo"><span class="modulo-numero">${t('editor.modulo', { n: mi + 1 })}<span class="sr-only">:</span></span> ${m.titulo}</h3>
             <ol class="aulas" role="list">
                 ${m.aulas.map((a) => {
                     numero += 1;
@@ -108,7 +107,7 @@ function listaAulas(curso, aulaAtualId = null) {
                         <a class="aula-item ${feita ? 'aula-item--feita' : ''}" href="#/cursos/${curso.id}/aula/${a.id}" ${a.id === aulaAtualId ? html`aria-current="page"` : ''}>
                             <span class="aula-marca" aria-hidden="true">${feita ? icone('check', 'icone icone--p') : numero}</span>
                             <span class="aula-nome">${a.titulo}
-                                <span class="aula-sub">${a.tipo === 'video' ? t('cursos.tipoVideo') : t('cursos.tipoTexto')} · ${t('comum.minutos', { n: a.minutos })}${podeEstudarCurso(curso) ? ` · ${feita ? t('cursos.aulaConcluida') : t('cursos.aulaPendente')}` : ''}</span>
+                                <span class="aula-sub">${icone(a.tipo === 'video' ? 'play' : 'text', 'icone icone--p')}${a.tipo === 'video' ? t('cursos.tipoVideo') : t('cursos.tipoTexto')} · ${t('comum.minutos', { n: a.minutos })}${podeEstudarCurso(curso) ? html`<span class="sr-only"> · ${feita ? t('cursos.aulaConcluida') : t('cursos.aulaPendente')}</span>` : ''}</span>
                             </span>
                         </a>
                     </li>`;
@@ -147,19 +146,40 @@ function gabaritoEquipe(curso) {
         </li>`)}</ol>`;
 }
 
+/** Atribuir o curso a várias pessoas de uma vez (gestor: a própria equipe; consultoria: qualquer empresa liberada). */
 async function blocoMatricular(usuario, curso) {
     if (!(ehEquipe(usuario.perfil) || usuario.perfil === 'company_admin') || !curso.ativo) return '';
     const pessoas = await dados.pessoasParaMatricular(usuario, curso.id);
+    const equipe = ehEquipe(usuario.perfil);
     return html`<section class="painel-bloco" aria-labelledby="matricular-titulo">
-        <h2 id="matricular-titulo" class="bloco-titulo">${t('cursos.matricularPessoas')}</h2>
-        ${pessoas.length ? html`<form class="formulario formulario--compacto" data-form="matricular">
-            <div class="campo">
-                <label for="matricular-pessoa">${t('relatorios.pessoa')}</label>
-                <select id="matricular-pessoa" name="pessoa">${pessoas.map((p) => opcao(p.id, ehEquipe(usuario.perfil) ? `${p.nome} — ${p.empresaNome}` : p.nome))}</select>
-            </div>
-            <button type="submit" class="botao botao--secundario">${t('cursos.matricularBotao')}</button>
-        </form>` : html`<p class="vazio">${t('cursos.ninguem')}</p>`}
+        <h2 id="matricular-titulo" class="bloco-titulo">${t('cursos.atribuirTitulo')}</h2>
+        <p class="bloco-nota">${t('cursos.atribuirNota')}</p>
+        ${pessoas.length ? html`<form class="atribuir" data-form="matricular">
+            ${pessoas.length > 1 ? html`<label class="atribuir-todos">
+                <input type="checkbox" data-todos>
+                <span>${t('cursos.selecionarTodos', { n: pessoas.length })}</span>
+            </label>` : ''}
+            <fieldset class="atribuir-lista">
+                <legend class="sr-only">${t('cursos.atribuirTitulo')}</legend>
+                ${pessoas.map((p) => html`<label class="atribuir-pessoa">
+                    <input type="checkbox" name="pessoa" value="${p.id}">
+                    ${avatar(p.nome)}
+                    <span class="linha-principal">${p.nome}${equipe ? html`<span class="linha-sub">${p.empresaNome}</span>` : ''}</span>
+                </label>`)}
+            </fieldset>
+            <button type="submit" class="botao botao--primario botao--largo" data-atribuir disabled>${icone('send', 'icone icone--p')}<span data-atribuir-rotulo>${t('cursos.atribuirBotao', { n: 0 })}</span></button>
+        </form>` : html`<p class="tudo-certo">${icone('check', 'icone icone--p')}${t('cursos.ninguem')}</p>`}
     </section>`;
+}
+
+/** Próximo passo de quem estuda o curso (fica no cabeçalho). */
+function acaoCurso(curso) {
+    const p = curso.progresso;
+    if (!p?.matriculado) return '';
+    if (p.concluido && p.certificadoId) return html`<a class="botao botao--ouro botao--g" href="#/certificado/${p.certificadoId}">${icone('award')}${t('cursos.verCertificado')}</a>`;
+    if (p.proximaAulaId) return html`<a class="botao botao--claro botao--g" href="#/cursos/${curso.id}/aula/${p.proximaAulaId}">${icone('tocar', 'icone icone--p')}${rotuloAcao(p)}</a>`;
+    if (!p.aprovado && p.tentativasRestantes > 0) return html`<a class="botao botao--claro botao--g" href="#/cursos/${curso.id}/avaliacao">${t('cursos.fazerAvaliacao')}${icone('arrow', 'icone icone--p')}</a>`;
+    return '';
 }
 
 function blocoProgresso(curso) {
@@ -171,16 +191,10 @@ function blocoProgresso(curso) {
             <button type="button" class="botao botao--primario botao--largo" data-matricular-me>${t('cursos.matricularMe')}</button>
         </section>`;
     }
-    let acao;
-    if (p.concluido && p.certificadoId) acao = html`<a class="botao botao--primario botao--largo" href="#/certificado/${p.certificadoId}">${icone('award')}${t('cursos.verCertificado')}</a>`;
-    else if (p.proximaAulaId) acao = html`<a class="botao botao--primario botao--largo" href="#/cursos/${curso.id}/aula/${p.proximaAulaId}">${rotuloAcao(p)}</a>`;
-    else if (!p.aprovado && p.tentativasRestantes > 0) acao = html`<a class="botao botao--primario botao--largo" href="#/cursos/${curso.id}/avaliacao">${t('cursos.fazerAvaliacao')}</a>`;
-    return html`<section class="painel-bloco trilha-bloco" aria-labelledby="progresso-titulo">
+    return html`<section class="painel-bloco progresso-bloco" aria-labelledby="progresso-titulo">
         <h2 id="progresso-titulo" class="bloco-titulo">${p.concluido ? t('cursos.concluidoEm', { data: formatarData(p.concluidoEm, { dateStyle: 'medium' }) }) : t('painel.progressoAulas', { feitas: p.feitas, total: p.total })}</h2>
-        <div class="trilha-visual">${trilhaDoCurso(p)}</div>
-        <p class="trilha-progresso" id="curso-progresso">${t('cursos.progresso', { p: p.percentual })}</p>
+        <p class="progresso-numero" id="curso-progresso"><span class="sr-only">${t('cursos.progresso', { p: p.percentual })}</span><span aria-hidden="true">${p.percentual}<small>%</small></span></p>
         ${barra(p.percentual, 'curso-progresso')}
-        ${acao ?? ''}
     </section>`;
 }
 
@@ -193,14 +207,18 @@ async function detalhe(usuario, id, recarregar) {
     return {
         titulo: curso.titulo,
         conteudo: html`
-            <a class="voltar" href="#/cursos">${icone('back', 'icone icone--p')}${t('cursos.voltar')}</a>
-            <header class="cabecalho cabecalho--acoes">
-                <div>
-                    <h1 class="titulo" tabindex="-1">${curso.titulo}</h1>
-                    <p class="subtitulo">${curso.descricao}</p>
-                    <p class="curso-meta">${t('cursos.resumo', { modulos: curso.modulos.length, aulas: curso.modulos.reduce((s, m) => s + m.aulas.length, 0), horas: curso.cargaHoraria })}${!curso.ativo ? html` · <span class="selo selo--neutro">${t('cursos.inativo')}</span>` : ''}</p>
+            <header class="curso-hero">
+                ${capa(curso, curso.progresso, { classe: 'curso-hero-fundo', largura: 960, altura: 400, trilha: [0.5, 0.92, 0.22, 0.72] })}
+                <div class="curso-hero-corpo">
+                    <a class="voltar voltar--claro" href="#/cursos">${icone('back', 'icone icone--p')}${t('cursos.voltar')}</a>
+                    <h1 class="titulo titulo--hero" tabindex="-1">${curso.titulo}</h1>
+                    <p class="curso-hero-descricao">${curso.descricao}</p>
+                    <p class="curso-hero-meta">${t('cursos.resumo', { modulos: curso.modulos.length, aulas: curso.modulos.reduce((s, m) => s + m.aulas.length, 0), horas: curso.cargaHoraria })}${!curso.ativo ? html` <span class="selo selo--neutro">${t('cursos.inativo')}</span>` : ''}</p>
+                    <div class="curso-hero-acoes">
+                        ${acaoCurso(curso)}
+                        ${equipe ? html`<a class="botao botao--claro-contorno" href="#/cursos/${curso.id}/editar">${t('cursos.editar')}</a>` : ''}
+                    </div>
                 </div>
-                ${equipe ? html`<a class="botao botao--secundario" href="#/cursos/${curso.id}/editar">${t('cursos.editar')}</a>` : ''}
             </header>
             ${equipe ? html`<p class="nota">${t('cursos.previaEquipe')} ${t('cursos.liberadoPara')}: ${curso.empresas.length ? curso.empresas.map((e) => nomesEmpresas[e]).filter(Boolean).join(', ') : t('cursos.nenhumaEmpresa')}.</p>` : ''}
             <div class="painel-grade">
@@ -230,17 +248,38 @@ async function detalhe(usuario, id, recarregar) {
                 }
             });
             const form = raiz.querySelector('[data-form="matricular"]');
-            form?.addEventListener('submit', async (evento) => {
-                evento.preventDefault();
-                const nome = form.pessoa.selectedOptions[0]?.textContent ?? '';
-                try {
-                    await dados.matricular(usuario, curso.id, form.pessoa.value);
-                    anunciar(t('cursos.matriculaFeita', { nome }));
-                    await recarregar();
-                } catch (erro) {
-                    mostrarErro(erro);
-                }
-            });
+            if (form) {
+                const marcadas = () => [...form.querySelectorAll('[name="pessoa"]:checked')];
+                const todos = form.querySelector('[data-todos]');
+                const contar = () => {
+                    const n = marcadas().length;
+                    const total = form.querySelectorAll('[name="pessoa"]').length;
+                    form.querySelector('[data-atribuir]').disabled = n === 0;
+                    form.querySelector('[data-atribuir-rotulo]').textContent = t('cursos.atribuirBotao', { n });
+                    if (todos) {
+                        todos.checked = n === total;
+                        todos.indeterminate = n > 0 && n < total;
+                    }
+                };
+                form.addEventListener('change', (evento) => {
+                    if (evento.target === todos) form.querySelectorAll('[name="pessoa"]').forEach((c) => { c.checked = todos.checked; });
+                    contar();
+                });
+                form.addEventListener('submit', async (evento) => {
+                    evento.preventDefault();
+                    const ids = marcadas().map((c) => c.value);
+                    if (!ids.length) return;
+                    form.querySelector('[data-atribuir]').disabled = true;
+                    try {
+                        for (const id of ids) await dados.matricular(usuario, curso.id, id);
+                        anunciar(t('cursos.atribuidos', { n: ids.length }));
+                        await recarregar();
+                    } catch (erro) {
+                        mostrarErro(erro);
+                        contar();
+                    }
+                });
+            }
         },
     };
 }
@@ -271,24 +310,28 @@ async function telaAula(usuario, cursoId, aulaId, recarregar) {
     return {
         titulo: aula.titulo,
         conteudo: html`
-            <a class="voltar" href="#/cursos/${curso.id}">${icone('back', 'icone icone--p')}${curso.titulo}</a>
-            <header class="cabecalho">
-                <p class="sobretitulo">${t('aula.posicao', { n: indice + 1, total: aulas.length })} · ${aula.modulo}</p>
-                <h1 class="titulo" tabindex="-1">${aula.titulo}</h1>
-            </header>
             <div class="aula-grade">
                 <article class="aula-corpo">
-                    ${aula.tipo === 'video' && aula.videoId ? html`
-                        <div class="video">
-                            <iframe src="https://www.youtube-nocookie.com/embed/${aula.videoId}?rel=0" title="${t('aula.videoTitulo', { titulo: aula.titulo })}"
-                                allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" loading="lazy"></iframe>
-                        </div>
-                        <p class="campo-dica">${t('aula.videoAviso')}</p>` : ''}
+                    <div class="aula-palco">
+                        ${capa(curso, p, { classe: 'aula-palco-fundo', largura: 960, altura: 300, trilha: [0.55, 0.94, 0.15, 0.4] })}
+                        <header class="aula-palco-cabecalho">
+                            <a class="voltar voltar--claro" href="#/cursos/${curso.id}">${icone('back', 'icone icone--p')}${curso.titulo}</a>
+                            <p class="sobretitulo">${t('aula.posicao', { n: indice + 1, total: aulas.length })} · ${aula.modulo}</p>
+                            <h1 class="titulo titulo--palco" tabindex="-1">${aula.titulo}</h1>
+                            <p class="aula-palco-meta">${icone(aula.tipo === 'video' ? 'play' : 'text', 'icone icone--p')}${aula.tipo === 'video' ? t('cursos.tipoVideo') : t('cursos.tipoTexto')} · ${t('comum.minutos', { n: aula.minutos })}</p>
+                        </header>
+                        ${aula.tipo === 'video' && aula.videoId ? html`
+                            <div class="video">
+                                <iframe src="https://www.youtube-nocookie.com/embed/${aula.videoId}?rel=0" title="${t('aula.videoTitulo', { titulo: aula.titulo })}"
+                                    allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" referrerpolicy="strict-origin-when-cross-origin" loading="lazy"></iframe>
+                            </div>
+                            <p class="aula-palco-dica">${t('aula.videoAviso')}</p>` : ''}
+                    </div>
                     ${aula.conteudo ? html`<div class="aula-texto">${aula.conteudo.split(/\n{2,}/).map((paragrafo) => html`<p>${paragrafo}</p>`)}</div>` : ''}
                     <div class="aula-acao" data-acao-aula>${acao}</div>
                     <nav class="aula-navegacao" aria-label="${t('cursos.conteudo')}">
                         ${anterior ? html`<a class="botao botao--secundario" href="#/cursos/${curso.id}/aula/${anterior.id}">${icone('back', 'icone icone--p')}${t('aula.anterior')}</a>` : html`<span></span>`}
-                        ${proxima ? html`<a class="botao botao--secundario" href="#/cursos/${curso.id}/aula/${proxima.id}">${t('aula.proxima')}${icone('arrow', 'icone icone--p')}</a>` : ''}
+                        ${proxima ? html`<a class="botao ${feita ? 'botao--primario' : 'botao--secundario'}" href="#/cursos/${curso.id}/aula/${proxima.id}">${t('aula.proxima')}${icone('arrow', 'icone icone--p')}</a>` : ''}
                         ${irAvaliacao ? html`<a class="botao botao--primario" href="#/cursos/${curso.id}/avaliacao">${t('aula.irAvaliacao')}</a>` : ''}
                     </nav>
                 </article>
@@ -313,10 +356,19 @@ async function telaAula(usuario, cursoId, aulaId, recarregar) {
                 try {
                     const resultado = await dados.concluirAula(usuario, curso.id, aula.id);
                     const mensagens = [resultado.pontosGanhos ? t('aula.registrada', { pontos: resultado.pontosGanhos }) : t('aula.registradaSemPontos')];
-                    if (resultado.concluido) mensagens.push(t('aula.cursoConcluido'));
+                    const liberouAvaliacao = !resultado.concluido && resultado.feitas === resultado.total && curso.avaliacao.questoes.length > 0;
+                    if (liberouAvaliacao) mensagens.push(t('celebracao.avaliacaoLiberada'));
                     anunciar(mensagens.join(' '));
                     if (curso.avancoAutomatico && proxima) window.location.hash = `#/cursos/${curso.id}/aula/${proxima.id}`;
                     else await recarregar();
+                    if (resultado.concluido) {
+                        celebrar({
+                            titulo: t('celebracao.cursoTitulo'),
+                            texto: t('celebracao.cursoTexto', { curso: curso.titulo }),
+                            pontos: resultado.pontosGanhos,
+                            acao: resultado.certificadoId ? { rotulo: t('cursos.verCertificado'), href: `#/certificado/${resultado.certificadoId}` } : null,
+                        });
+                    }
                 } catch (erro) {
                     evento.currentTarget.disabled = false;
                     mostrarErro(erro);
@@ -342,7 +394,7 @@ function telaSimples(titulo, texto, voltarPara) {
 function resultadoAvaliacao(curso, r) {
     return html`<section class="painel-bloco resultado ${r.aprovado ? 'resultado--aprovado' : 'resultado--reprovado'}" aria-labelledby="resultado-titulo">
         <h2 id="resultado-titulo" class="bloco-titulo" tabindex="-1">${t('avaliacao.resultado')}</h2>
-        <p class="resultado-nota">${t('avaliacao.nota', { nota: r.nota })}</p>
+        <p class="resultado-nota"><span class="anel-nota" data-progresso="${r.nota}" aria-hidden="true"><span>${r.nota}<small>%</small></span></span><span>${t('avaliacao.nota', { nota: r.nota })}</span></p>
         <p class="resultado-texto">${r.aprovado ? t('avaliacao.aprovado', { min: r.notaMinima }) : t('avaliacao.reprovado', { min: r.notaMinima })}${r.pontosGanhos ? ` ${t('avaliacao.pontos', { pontos: r.pontosGanhos })}` : ''}</p>
         <ol class="correcao" role="list">${r.correcao.map((c, i) => html`<li class="${c.acertou ? 'correcao--certa' : 'correcao--errada'}">
             ${icone(c.acertou ? 'check' : 'close', 'icone icone--p')}${t('avaliacao.questao', { n: i + 1 })}: ${c.acertou ? t('avaliacao.acertou') : t('avaliacao.errou')}
@@ -399,6 +451,14 @@ async function telaAvaliacao(usuario, cursoId, recarregar) {
                     anunciar(`${t('avaliacao.nota', { nota: resultado.nota })}. ${resultado.aprovado ? t('avaliacao.aprovado', { min: resultado.notaMinima }) : t('avaliacao.reprovado', { min: resultado.notaMinima })}`, resultado.aprovado ? 'sucesso' : 'erro');
                     alvo.querySelector('#resultado-titulo').focus();
                     alvo.querySelector('[data-tentar]')?.addEventListener('click', () => recarregar());
+                    if (resultado.aprovado) {
+                        celebrar({
+                            titulo: resultado.progresso.concluido ? t('celebracao.cursoTitulo') : t('celebracao.aprovadoTitulo'),
+                            texto: t('celebracao.aprovadoTexto', { nota: resultado.nota, curso: curso.titulo }),
+                            pontos: resultado.pontosGanhos,
+                            acao: resultado.progresso.certificadoId ? { rotulo: t('cursos.verCertificado'), href: `#/certificado/${resultado.progresso.certificadoId}` } : null,
+                        });
+                    }
                 } catch (erro) {
                     mostrarErro(erro, form);
                 }
@@ -668,9 +728,9 @@ export async function telaCertificado({ usuario, parametros }) {
                     ${c.empresa ? html`<p class="certificado-texto">${c.empresa}</p>` : ''}
                     <div class="certificado-rodape">
                         <p class="certificado-assinatura">${t('certificado.assinatura')}</p>
+                        <span class="certificado-selo" aria-hidden="true">${icone('award')}</span>
                         <p class="certificado-codigo">${t('certificado.codigo', { codigo: c.codigo })}</p>
                     </div>
-                    <p class="certificado-demo">${t('certificado.demo')}</p>
                 </div>
             </article>`,
         montar(raiz) {

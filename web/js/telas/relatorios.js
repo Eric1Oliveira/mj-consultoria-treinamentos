@@ -74,7 +74,7 @@ export async function tela({ usuario }) {
             <section class="painel-bloco" aria-labelledby="rel-curso-titulo">
                 <h2 id="rel-curso-titulo" class="bloco-titulo">${t('relatorios.porCurso')}</h2>
                 <div class="tabela-rolagem" tabindex="0" role="region" aria-labelledby="rel-curso-titulo">
-                    <table class="tabela">
+                    <table class="tabela tabela--cartoes">
                         <thead><tr>
                             <th scope="col">${t('relatorios.curso')}</th>
                             <th scope="col" class="num">${t('relatorios.matriculas')}</th>
@@ -84,10 +84,10 @@ export async function tela({ usuario }) {
                         </tr></thead>
                         <tbody>${r.porCurso.map((c, n) => html`<tr>
                             <th scope="row">${c.curso}</th>
-                            <td class="num">${formatarNumero(c.matriculados)}</td>
-                            <td class="num">${formatarNumero(c.concluidos)}</td>
-                            <td><span class="taxa"><span class="barra barra--fina" role="presentation"><span class="barra-preenchida" data-progresso="${Math.round(c.taxa * 100)}"></span></span><span id="taxa-${n}">${formatarPercentual(c.taxa)}</span></span></td>
-                            <td class="num">${nota(c.notaMedia)}</td>
+                            <td class="num" data-rotulo="${t('relatorios.matriculas')}">${formatarNumero(c.matriculados)}</td>
+                            <td class="num" data-rotulo="${t('relatorios.concluidas')}">${formatarNumero(c.concluidos)}</td>
+                            <td data-rotulo="${t('relatorios.taxaConclusao')}"><span class="taxa"><span class="barra barra--fina" role="presentation"><span class="barra-preenchida" data-progresso="${Math.round(c.taxa * 100)}"></span></span><span id="taxa-${n}">${formatarPercentual(c.taxa)}</span></span></td>
+                            <td class="num" data-rotulo="${t('relatorios.notaMedia')}">${nota(c.notaMedia)}</td>
                         </tr>`)}</tbody>
                     </table>
                 </div>
@@ -97,7 +97,7 @@ export async function tela({ usuario }) {
                 <h2 id="rel-pessoa-titulo" class="bloco-titulo">${t('relatorios.porPessoa')}</h2>
                 <p class="bloco-nota">${t('relatorios.atrasoDica', { dias: r.diasAtraso })}</p>
                 <div class="tabela-rolagem" tabindex="0" role="region" aria-labelledby="rel-pessoa-titulo">
-                    <table class="tabela">
+                    <table class="tabela tabela--cartoes">
                         <thead><tr>
                             <th scope="col">${t('relatorios.pessoa')}</th>
                             ${equipe ? html`<th scope="col">${t('comum.empresa')}</th>` : ''}
@@ -109,12 +109,12 @@ export async function tela({ usuario }) {
                         </tr></thead>
                         <tbody>${r.linhas.map((l) => html`<tr>
                             <th scope="row">${l.pessoa}</th>
-                            ${equipe ? html`<td>${l.empresa}</td>` : ''}
-                            <td>${l.curso}</td>
-                            <td class="num">${formatarNumero(l.progresso)}%</td>
-                            <td class="num">${nota(l.nota)}</td>
-                            <td><span class="selo ${SELO_SITUACAO[l.situacao]}">${t(`relatorios.situacoes.${l.situacao}`)}</span></td>
-                            <td><time datetime="${l.ultimaAtividade}">${formatarRelativo(l.ultimaAtividade)}</time></td>
+                            ${equipe ? html`<td data-rotulo="${t('comum.empresa')}">${l.empresa}</td>` : ''}
+                            <td data-rotulo="${t('relatorios.curso')}">${l.curso}</td>
+                            <td class="num" data-rotulo="${t('relatorios.progresso')}">${formatarNumero(l.progresso)}%</td>
+                            <td class="num" data-rotulo="${t('relatorios.nota')}">${nota(l.nota)}</td>
+                            <td data-rotulo="${t('comum.situacao')}"><span class="selo ${SELO_SITUACAO[l.situacao]}">${t(`relatorios.situacoes.${l.situacao}`)}</span></td>
+                            <td data-rotulo="${t('relatorios.ultima')}"><time datetime="${l.ultimaAtividade}">${formatarRelativo(l.ultimaAtividade)}</time></td>
                         </tr>`)}</tbody>
                     </table>
                 </div>

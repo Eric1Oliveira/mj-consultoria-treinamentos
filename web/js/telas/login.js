@@ -1,12 +1,11 @@
-// Login demonstrativo: escolher um perfil ou usar uma conta de exemplo.
-// Nada é enviado a lugar nenhum e nenhuma senha verdadeira é usada.
+// Login com e-mail e senha (Supabase Auth). Contas novas entram por convite.
 
 import * as dados from '../dados.js';
 import { t } from '../textos.js';
-import { html, avatar, irPara, anunciar } from '../app.js';
+import { html, icone, irPara, marcaTopo, pintarMarca } from '../app.js';
 
 export async function tela() {
-    const perfis = await dados.listarPerfisDemo();
+    const empresas = await dados.listarEmpresasPublicas();
 
     return {
         titulo: t('login.titulo'),
@@ -17,24 +16,19 @@ export async function tela() {
                     <p class="subtitulo">${t('login.sub')}</p>
                 </header>
 
-                <section aria-labelledby="login-perfis">
-                    <h2 id="login-perfis" class="bloco-titulo">${t('login.perfisTitulo')}</h2>
-                    <ul class="perfis" role="list">
-                        ${perfis.map((p) => html`
-                            <li>
-                                <button type="button" class="perfil" data-entrar-como="${p.id}"
-                                        aria-label="${t('login.entrarComo', { nome: p.nome, perfil: t(`perfis.${p.perfil}`) })}">
-                                    ${avatar(p.nome, p.empresa?.cor)}
-                                    <span class="perfil-texto">
-                                        <span class="perfil-papel">${t(`perfis.${p.perfil}`)}</span>
-                                        <span class="perfil-nome">${p.nome}</span>
-                                        ${p.empresa ? html`<span class="perfil-empresa">${p.empresa.nome}</span>` : ''}
-                                        <span class="perfil-descricao">${t(`perfisDescricao.${p.perfil}`)}</span>
-                                    </span>
-                                </button>
-                            </li>`)}
+
+                ${empresas.length ? html`<section class="vitrine" aria-labelledby="login-vitrine">
+                    <h2 id="login-vitrine" class="bloco-titulo">${t('login.vitrineTitulo')}</h2>
+                    <p class="bloco-nota">${t('login.vitrineNota')}</p>
+                    <ul class="vitrine-lista" role="list">
+                        ${empresas.map((e) => html`<li>
+                            <a class="vitrine-item escopo-marca" href="#/e/${e.identificador}" data-vitrine="${e.id}">
+                                ${marcaTopo(e, { inverso: true })}
+                                ${icone('arrow', 'icone icone--p')}
+                            </a>
+                        </li>`)}
                     </ul>
-                </section>
+                </section>` : ''}
 
                 <section class="login-form" aria-labelledby="login-form-titulo">
                     <h2 id="login-form-titulo" class="divisor"><span>${t('login.formTitulo')}</span></h2>
@@ -45,8 +39,7 @@ export async function tela() {
                         </div>
                         <div class="campo">
                             <label for="login-senha">${t('login.senha')}</label>
-                            <input id="login-senha" name="senha" type="password" autocomplete="current-password" required aria-describedby="login-senha-dica">
-                            <p id="login-senha-dica" class="campo-dica">${t('login.senhaDica')}</p>
+                            <input id="login-senha" name="senha" type="password" autocomplete="current-password" required>
                         </div>
                         <p id="login-erro" class="campo-erro" role="alert" hidden></p>
                         <button type="submit" class="botao botao--primario botao--largo">${t('login.entrar')}</button>
@@ -55,14 +48,8 @@ export async function tela() {
             </div>`,
 
         montar(raiz) {
-            raiz.querySelectorAll('[data-entrar-como]').forEach((botao) => {
-                botao.addEventListener('click', async () => {
-                    botao.disabled = true;
-                    const usuario = await dados.entrarComo(botao.dataset.entrarComo);
-                    anunciar(t('demo.trocadoPara', { nome: usuario.nome }));
-                    irPara('painel');
-                });
-            });
+            // Cada cartão da vitrine já aparece com a marca da empresa.
+            raiz.querySelectorAll('[data-vitrine]').forEach((el) => pintarMarca(el, empresas.find((e) => e.id === el.dataset.vitrine)));
 
             const form = raiz.querySelector('[data-form="login"]');
             const erro = raiz.querySelector('#login-erro');

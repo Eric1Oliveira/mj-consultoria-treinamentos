@@ -12,16 +12,16 @@ function resultado({ itens, total, pagina: atual, paginas }) {
     return html`
         <p class="bloco-nota" role="status">${t('auditoria.total', { n: formatarNumero(total) })}</p>
         <div class="tabela-rolagem" tabindex="0" role="region" aria-label="${t('auditoria.titulo')}">
-            <table class="tabela">
+            <table class="tabela tabela--cartoes">
                 <thead><tr>
                     <th scope="col">${t('auditoria.quando')}</th>
                     <th scope="col">${t('auditoria.acao')}</th>
                     <th scope="col">${t('comum.empresa')}</th>
                 </tr></thead>
                 <tbody>${itens.map((e) => html`<tr>
-                    <td class="tabela-data"><time datetime="${e.em}">${formatarData(e.em, { dateStyle: 'short', timeStyle: 'short' })}</time></td>
-                    <td>${fraseAtividade(e)}</td>
-                    <td>${e.empresa ?? t('comum.semValor')}</td>
+                    <td class="tabela-data" data-rotulo="${t('auditoria.quando')}"><time datetime="${e.em}">${formatarData(e.em, { dateStyle: 'short', timeStyle: 'short' })}</time></td>
+                    <td class="tabela-principal" data-rotulo="${t('auditoria.acao')}">${fraseAtividade(e)}</td>
+                    <td data-rotulo="${t('comum.empresa')}">${e.empresa ?? t('comum.semValor')}</td>
                 </tr>`)}</tbody>
             </table>
         </div>
