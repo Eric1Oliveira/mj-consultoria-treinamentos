@@ -5,7 +5,11 @@ import { t } from '../textos.js';
 import { html, icone, irPara, marcaTopo, pintarMarca } from '../app.js';
 
 export async function tela() {
-    const empresas = await dados.listarEmpresasPublicas();
+    // A vitrine é opcional: se falhar, o formulário de entrada continua disponível.
+    const empresas = await dados.listarEmpresasPublicas().catch((erro) => {
+        console.error(erro);
+        return [];
+    });
 
     return {
         titulo: t('login.titulo'),

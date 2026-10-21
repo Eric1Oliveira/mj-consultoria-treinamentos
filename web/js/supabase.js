@@ -1,8 +1,8 @@
 // Cliente mínimo do Supabase (Auth + REST + RPC) com fetch, sem dependências.
-// A chave "anon" é pública por definição: quem protege os dados é o RLS do banco.
+// A chave publishable é pública por definição: quem protege os dados é o RLS do banco.
 
 export const SUPABASE_URL = 'https://ehhksabwmdtpeyxxorwn.supabase.co';
-const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVoaGtzYWJ3bWR0cGV5eHhvcnduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1MzU2NDQsImV4cCI6MjEwODExMTY0NH0.3C4mqT1GbjXMoKiim8qBPPbvsrpaE5c24P1drJsPtifN';
+const ANON = 'sb_publishable_7OEQ2a-yKHbPu8eePojkxQ_jl74WzcP';
 const CHAVE_SESSAO = 'mjc:sessao';
 
 /** Erro vindo do Supabase: `codigo` e `detalhe` são os que as funções do banco enviam. */
@@ -39,7 +39,8 @@ function guardarSessao(nova) {
 async function chamar(caminho, { metodo = 'GET', corpo, token, cabecalhos = {} } = {}) {
     const resposta = await fetch(`${SUPABASE_URL}${caminho}`, {
         method: metodo,
-        headers: { apikey: ANON, Authorization: `Bearer ${token ?? ANON}`, 'Content-Type': 'application/json', ...cabecalhos },
+        // A chave publishable vai só no apikey; Authorization leva apenas o token da sessão.
+        headers: { apikey: ANON, ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', ...cabecalhos },
         body: corpo === undefined ? undefined : JSON.stringify(corpo),
     });
     const textoResposta = await resposta.text();
