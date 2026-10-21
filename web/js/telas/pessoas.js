@@ -261,6 +261,18 @@ export async function tela({ usuario, parametros, recarregar }) {
     if (ehEquipe(usuario.perfil)) {
         empresas = await dados.listarEmpresas(usuario);
         empresaId = parametros[0] && empresas.some((e) => e.id === parametros[0]) ? parametros[0] : empresas.find((e) => e.ativa)?.id ?? empresas[0]?.id;
+        // Ainda sem empresas cadastradas: não há de quem listar funcionários.
+        if (!empresaId) {
+            return {
+                titulo: t('pessoas.titulo'),
+                conteudo: html`
+                    <header class="cabecalho">
+                        <h1 class="titulo" tabindex="-1">${t('pessoas.titulo')}</h1>
+                    </header>
+                    <p class="vazio">${t('empresas.nenhuma')}</p>
+                    <p><a class="botao botao--primario" href="#/empresas">${t('empresas.nova')}</a></p>`,
+            };
+        }
     }
     const empresa = await dados.obterEmpresa(empresaId);
     if (!empresa) throw new dados.ErroDados('nao-encontrado');

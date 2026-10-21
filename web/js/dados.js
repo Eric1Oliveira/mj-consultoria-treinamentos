@@ -45,18 +45,38 @@ function converter(erro) {
     return erro;
 }
 
+// Cache curto das leituras: trocar de tela e voltar não refaz as mesmas consultas.
+// Leituras iguais em andamento são compartilhadas. Qualquer escrita (RPC que não seja
+// só leitura), entrar ou sair limpa tudo, então a tela nunca mostra dado velho depois de uma ação.
+const CACHE_MS = 30_000;
+const cache = new Map();
+const RPC_LEITURA = new Set(['meu_perfil', 'listar_empresas_publicas', 'obter_empresa_publica', 'obter_convite', 'emails_bloqueados', 'ranking_empresa']);
+
+function limparCache() {
+    cache.clear();
+}
+
 async function rpc(funcao, argumentos) {
+    if (!RPC_LEITURA.has(funcao)) limparCache();
     try {
         return await sb.rpc(funcao, argumentos);
     } catch (erro) {
         throw converter(erro);
+    } finally {
+        if (!RPC_LEITURA.has(funcao)) limparCache();
     }
 }
 
 async function ler(tabela, consulta) {
+    const chave = `${tabela}?${consulta}`;
+    const guardado = cache.get(chave);
+    if (guardado && guardado.ate > Date.now()) return structuredClone(await guardado.promessa);
+    const promessa = sb.ler(tabela, consulta);
+    cache.set(chave, { promessa, ate: Date.now() + CACHE_MS });
     try {
-        return await sb.ler(tabela, consulta);
+        return structuredClone(await promessa);
     } catch (erro) {
+        if (cache.get(chave)?.promessa === promessa) cache.delete(chave);
         throw converter(erro);
     }
 }
@@ -112,6 +132,7 @@ export async function entrar(email, senha) {
     } catch {
         throw new ErroDados('credenciais');
     }
+    limparCache();
     eu = camel(await rpc('registrar_acesso'));
     if (!eu) {
         await sb.sair();
@@ -122,6 +143,7 @@ export async function entrar(email, senha) {
 
 export async function sair() {
     eu = null;
+    limparCache();
     await sb.sair();
 }
 

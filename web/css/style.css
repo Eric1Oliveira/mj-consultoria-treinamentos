@@ -5261,3 +5261,14 @@ button {
         margin: 12mm;
     }
 }
+
+/* Enquanto a próxima tela carrega: o menu já reagiu e a tela atual esmaece. */
+[aria-busy="true"] > .tela {
+    opacity: 0.55;
+    pointer-events: none;
+    transition: opacity 150ms ease 80ms;
+}
+
+[aria-busy="true"] {
+    cursor: progress;
+}

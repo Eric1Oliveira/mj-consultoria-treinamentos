@@ -264,15 +264,16 @@ export async function tela({ usuario, empresa }) {
     const estuda = podeEstudar(usuario.perfil);
     const gere = pode(usuario, 'ver-relatorios');
     const gestor = usuario.perfil === 'company_admin';
-    const [resumo, atividade, cursos, gamificacao, ranking, relatorio] = await Promise.all([
+    const [resumo, atividade, cursos, gamificacao, ranking, relatorio, todasEmpresas] = await Promise.all([
         dados.resumoPainel(usuario),
         dados.atividadeRecente(usuario, 6),
         estuda ? dados.listarCursos(usuario) : [],
         estuda && !gestor ? dados.perfilGamificacao(usuario) : null,
         usuario.empresaId ? dados.rankingEmpresa(usuario) : null,
         gere ? dados.relatorio(usuario) : null,
+        ehEquipe(usuario.perfil) ? dados.listarEmpresas(usuario) : null,
     ]);
-    const empresas = ehEquipe(usuario.perfil) ? (await dados.listarEmpresas(usuario)).slice(0, 6) : null;
+    const empresas = todasEmpresas?.slice(0, 6) ?? null;
 
     // "Continue de onde parou": um curso em andamento (o mais avançado primeiro).
     const emAndamento = cursos.filter((c) => c.progresso?.matriculado && !c.progresso.concluido)
