@@ -178,23 +178,25 @@ function ligarLote(raiz, usuario, empresaId, recarregar) {
 
 // ------------------------------------------------------------- pessoas --
 
-const filtro = { busca: '', situacao: 'todas' };
+const filtro = { busca: '', situacao: 'todas', area: '' };
 let empresaDoFiltro = null;
 
 /** Linha de uma pessoa com as ações que `usuario` pode fazer nela. */
 export function linhaPessoa(usuario, p) {
     const gerir = podeGerirPessoa(usuario, p);
     const mudarPerfil = pode(usuario, 'mudar-perfil', { pessoa: p });
+    const area = p.empresaId && pode(usuario, 'definir-area', { pessoa: p });
     const outroPerfil = p.perfil === 'student' ? 'company_admin' : 'student';
     return html`
         <li class="linha">
             ${avatar(p.nome)}
             <span class="linha-principal">${p.nome}${p.id === usuario.id ? html` <span class="selo selo--marca">${t('pessoas.voce')}</span>` : ''}
                 <span class="linha-sub">${p.email}</span>
-                <span class="linha-sub">${t(`perfis.${p.perfil}`)} · ${p.ultimoAcesso ? t('painel.ultimoAcesso', { quando: formatarRelativo(p.ultimoAcesso) }) : t('painel.nuncaEntrou')}</span>
+                <span class="linha-sub">${[t(`perfis.${p.perfil}`), p.area, p.ultimoAcesso ? t('painel.ultimoAcesso', { quando: formatarRelativo(p.ultimoAcesso) }) : t('painel.nuncaEntrou')].filter(Boolean).join(' · ')}</span>
             </span>
             ${p.ativo ? '' : html`<span class="selo selo--neutro">${t('comum.inativo')}</span>`}
-            ${gerir || mudarPerfil ? html`<span class="linha-acoes">
+            ${gerir || mudarPerfil || area ? html`<span class="linha-acoes">
+                ${area ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="area" data-id="${p.id}" data-nome="${p.nome}" data-area="${p.area ?? ''}">${p.area ? t('pessoas.mudarArea') : t('pessoas.definirArea')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${gerir ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="renomear" data-id="${p.id}" data-nome="${p.nome}">${t('pessoas.editarNome')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${mudarPerfil && p.ativo ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="perfil" data-id="${p.id}" data-nome="${p.nome}" data-perfil="${outroPerfil}">${t(outroPerfil === 'company_admin' ? 'pessoas.tornarGestor' : 'pessoas.tornarAluno')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${gerir ? html`<button type="button" class="botao ${p.ativo ? 'botao--fantasma' : 'botao--secundario'} botao--p" data-pessoa="${p.ativo ? 'desativar' : 'reativar'}" data-id="${p.id}" data-nome="${p.nome}">${p.ativo ? t('comum.desativar') : t('comum.reativar')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
@@ -224,6 +226,18 @@ export function ligarPessoas(raiz, usuario, recarregar) {
                     if (!novo) return;
                     await dados.renomearPessoa(usuario, id, novo);
                     anunciar(t('pessoas.renomeada'));
+                    break;
+                }
+                case 'area': {
+                    const nova = await perguntar({
+                        titulo: t('pessoas.areaTitulo', { nome }),
+                        texto: t('pessoas.areaTexto'),
+                        confirmar: t('comum.salvar'),
+                        campo: { rotulo: t('pessoas.area'), valor: botao.dataset.area, maximo: 60, permitirVazio: true },
+                    });
+                    if (nova === null) return;
+                    await dados.definirAreaPessoa(usuario, id, nova);
+                    anunciar(t('pessoas.areaSalva', { nome }));
                     break;
                 }
                 case 'desativar': {
@@ -274,18 +288,24 @@ export async function tela({ usuario, parametros, recarregar }) {
             };
         }
     }
-    const empresa = await dados.obterEmpresa(empresaId);
-    if (!empresa) throw new dados.ErroDados('nao-encontrado');
     if (empresaDoFiltro !== empresaId) {
         empresaDoFiltro = empresaId;
         filtro.busca = '';
         filtro.situacao = 'todas';
+        filtro.area = '';
         esquecerUltimoConvite();
     }
 
-    const pessoas = await dados.listarPessoas(usuario, empresaId, filtro);
+    // Tudo de uma vez (uma ida ao servidor em vez de três em fila).
+    const [empresa, pessoas, areas, todosConvites] = await Promise.all([
+        dados.obterEmpresa(empresaId),
+        dados.listarPessoas(usuario, empresaId, filtro),
+        dados.areasDaEmpresa(empresaId),
+        dados.listarConvites(usuario, empresaId).catch(() => []),
+    ]);
+    if (!empresa) throw new dados.ErroDados('nao-encontrado');
     const perfisConvite = ['company_admin', 'student'].filter((p) => podeConvidar(usuario, p, empresa));
-    const convites = perfisConvite.length ? await dados.listarConvites(usuario, empresaId) : [];
+    const convites = perfisConvite.length ? todosConvites : [];
 
     return {
         titulo: t('pessoas.titulo'),
@@ -320,6 +340,14 @@ export async function tela({ usuario, parametros, recarregar }) {
                                     ${opcao('inativas', t('comum.inativas'), filtro.situacao === 'inativas')}
                                 </select>
                             </div>
+                            ${areas.length ? html`<div class="campo">
+                                <label for="pessoas-area">${t('pessoas.area')}</label>
+                                <select id="pessoas-area" name="area">
+                                    ${opcao('', t('comum.todas'), !filtro.area)}
+                                    ${areas.map((a) => opcao(a, a, filtro.area === a))}
+                                    ${opcao('-', t('pessoas.semArea'), filtro.area === '-')}
+                                </select>
+                            </div>` : ''}
                         </form>
                         <div data-lista aria-live="polite">${listaPessoas(usuario, pessoas)}</div>
                     </section>
@@ -339,6 +367,7 @@ export async function tela({ usuario, parametros, recarregar }) {
             form.addEventListener('input', async () => {
                 filtro.busca = form.busca.value;
                 filtro.situacao = form.situacao.value;
+                filtro.area = form.area?.value ?? '';
                 desenharEm(raiz.querySelector('[data-lista]'), listaPessoas(usuario, await dados.listarPessoas(usuario, empresaId, filtro)));
             });
             form.addEventListener('submit', (evento) => evento.preventDefault());

@@ -8,7 +8,7 @@
 import * as sb from './supabase.js';
 import {
     ehEquipe, podeEstudar, pode, filtrarVisiveis, convitePendente,
-    emailValido, gerarIdentificador, codigoYoutube, nivelPorPontos, sequenciaDias, marcaDe, DESAFIO_SEMANAL,
+    emailValido, gerarIdentificador, codigoYoutube, nivelPorPontos, sequenciaDias, marcaDe, DESAFIO_SEMANAL, indiceEngajamento,
 } from './regras.js';
 
 const CHAVE_PREFERENCIAS = 'mjc:preferencias';
@@ -45,40 +45,91 @@ function converter(erro) {
     return erro;
 }
 
-// Cache curto das leituras: trocar de tela e voltar não refaz as mesmas consultas.
-// Leituras iguais em andamento são compartilhadas. Qualquer escrita (RPC que não seja
-// só leitura), entrar ou sair limpa tudo, então a tela nunca mostra dado velho depois de uma ação.
-const CACHE_MS = 30_000;
+// Cache das leituras ("mostra já, atualiza por trás"): até FRESCO_MS a leitura é reaproveitada;
+// até VALIDO_MS ela é mostrada na hora e uma atualização sai em segundo plano (a próxima
+// visita já vem nova). Leituras iguais em andamento são compartilhadas. Qualquer escrita
+// (RPC que não seja só leitura), entrar ou sair limpa tudo: depois de uma ação a tela
+// nunca mostra dado velho.
+const FRESCO_MS = 30_000;
+const VALIDO_MS = 5 * 60_000;
 const cache = new Map();
-const RPC_LEITURA = new Set(['meu_perfil', 'listar_empresas_publicas', 'obter_empresa_publica', 'obter_convite', 'emails_bloqueados', 'ranking_empresa']);
+let aoEscrever = () => {};
+
+/** O app avisa aqui o que fazer depois de uma escrita (re-aquecer o cache em segundo plano). */
+export function depoisDeEscrever(funcao) {
+    aoEscrever = funcao;
+}
+// Funções do banco que só leem: não limpam o cache, e as marcadas com cache guardam o resultado.
+const RPC_LEITURA = new Set([
+    'meu_perfil', 'listar_empresas_publicas', 'obter_empresa_publica', 'obter_convite', 'emails_bloqueados', 'ranking_empresa',
+    'validar_certificado', 'listar_diagnosticos', 'resultado_diagnostico', 'panorama_maturidade', 'panorama_empresas',
+    'listar_kaizens', 'obter_kaizen', 'colegas',
+]);
+const RPC_COM_CACHE = new Set(['ranking_empresa', 'listar_diagnosticos', 'resultado_diagnostico', 'panorama_maturidade',
+    'panorama_empresas', 'listar_kaizens', 'obter_kaizen', 'colegas']);
 
 function limparCache() {
     cache.clear();
 }
 
+function buscarParaCache(chave, buscar) {
+    const promessa = buscar();
+    const entrada = { promessa, em: Date.now() };
+    cache.set(chave, entrada);
+    // Falhou: sai do cache (a próxima leitura tenta de novo).
+    promessa.catch(() => {
+        if (cache.get(chave) === entrada) cache.delete(chave);
+    });
+    return promessa;
+}
+
+async function lembrar(chave, buscar) {
+    const guardado = cache.get(chave);
+    const idade = guardado ? Date.now() - guardado.em : Infinity;
+    let promessa;
+    if (idade < FRESCO_MS) {
+        promessa = guardado.promessa;
+    } else if (idade < VALIDO_MS && guardado.pronto) {
+        // Mostra o que já tem e atualiza por trás (uma vez só).
+        if (!guardado.atualizando) {
+            guardado.atualizando = true;
+            const nova = buscar();
+            nova.then((valor) => {
+                if (cache.get(chave) === guardado) cache.set(chave, { promessa: Promise.resolve(valor), em: Date.now(), pronto: true });
+            }, () => { guardado.atualizando = false; });
+        }
+        promessa = guardado.promessa;
+    } else {
+        promessa = buscarParaCache(chave, buscar);
+    }
+    try {
+        const valor = await promessa;
+        const entrada = cache.get(chave);
+        if (entrada?.promessa === promessa) entrada.pronto = true;
+        return structuredClone(valor);
+    } catch (erro) {
+        throw converter(erro);
+    }
+}
+
 async function rpc(funcao, argumentos) {
-    if (!RPC_LEITURA.has(funcao)) limparCache();
+    if (RPC_COM_CACHE.has(funcao)) return lembrar(`rpc:${funcao}:${JSON.stringify(argumentos ?? {})}`, () => sb.rpc(funcao, argumentos));
+    const escrita = !RPC_LEITURA.has(funcao);
+    if (escrita) limparCache();
     try {
         return await sb.rpc(funcao, argumentos);
     } catch (erro) {
         throw converter(erro);
     } finally {
-        if (!RPC_LEITURA.has(funcao)) limparCache();
+        if (escrita) {
+            limparCache();
+            aoEscrever();
+        }
     }
 }
 
 async function ler(tabela, consulta) {
-    const chave = `${tabela}?${consulta}`;
-    const guardado = cache.get(chave);
-    if (guardado && guardado.ate > Date.now()) return structuredClone(await guardado.promessa);
-    const promessa = sb.ler(tabela, consulta);
-    cache.set(chave, { promessa, ate: Date.now() + CACHE_MS });
-    try {
-        return structuredClone(await promessa);
-    } catch (erro) {
-        if (cache.get(chave)?.promessa === promessa) cache.delete(chave);
-        throw converter(erro);
-    }
+    return lembrar(`${tabela}?${consulta}`, () => sb.ler(tabela, consulta));
 }
 
 const valor = (v) => encodeURIComponent(v);
@@ -114,12 +165,22 @@ function atual() {
 
 export async function iniciar() {
     if (!sb.temSessao()) return;
+    // A empresa vem junto com o perfil (uma ida ao servidor a menos ao abrir o site).
+    const id = sb.idDaSessao();
+    const empresaJunto = id ? sb.ler('perfis', `select=empresa:empresa_id(*)&id=eq.${valor(id)}`).catch(() => null) : null;
     try {
         eu = camel(await sb.rpc('meu_perfil'));
     } catch {
         eu = null;
     }
-    if (!eu) await sb.sair();
+    if (!eu) {
+        await sb.sair();
+        return;
+    }
+    const empresa = eu.empresaId ? (await empresaJunto)?.[0]?.empresa : null;
+    if (empresa?.id === eu.empresaId) {
+        cache.set(`empresas?select=*&id=eq.${valor(eu.empresaId)}`, { promessa: Promise.resolve([empresa]), em: Date.now(), pronto: true });
+    }
 }
 
 export async function usuarioAtual() {
@@ -145,6 +206,40 @@ export async function sair() {
     eu = null;
     limparCache();
     await sb.sair();
+}
+
+/** Volta do link de recuperação de senha (o Supabase põe a sessão no endereço). */
+export function retornoDoAuth(hash) {
+    return sb.lerRetornoDoAuth(hash);
+}
+
+/** Envia o e-mail de recuperação. Responde igual exista ou não a conta (não revela quem tem acesso). */
+export async function recuperarSenha(email) {
+    const endereco = texto(email, 255).toLowerCase();
+    if (!emailValido(endereco)) throw new ErroDados('validacao', { email: 'email' });
+    try {
+        await sb.recuperarSenha(endereco, window.location.href.split('#')[0]);
+    } catch (erro) {
+        if (erro instanceof sb.ErroSupabase && erro.status === 429) throw new ErroDados('validacao', { email: 'muitasTentativas' });
+        // demais erros: mesma resposta de sucesso, para não revelar se o e-mail existe
+    }
+}
+
+/** Nova senha para quem está logado (ou chegou pelo link de recuperação). */
+export async function trocarSenha(senha, confirmacao) {
+    const erros = {};
+    if (String(senha ?? '').length < SENHA_MINIMA) erros.senha = 'senhaCurta';
+    else if (senha !== confirmacao) erros.confirmacao = 'senhasDiferentes';
+    if (Object.keys(erros).length) throw new ErroDados('validacao', erros, { min: SENHA_MINIMA });
+    try {
+        await sb.atualizarSenha(senha);
+    } catch (erro) {
+        const mensagem = erro instanceof sb.ErroSupabase ? String(erro.message) : '';
+        if (/different|same/i.test(mensagem)) throw new ErroDados('validacao', { senha: 'senhaIgual' });
+        if (erro instanceof sb.ErroSupabase && erro.status === 422) throw new ErroDados('validacao', { senha: 'senhaFraca' }, { min: SENHA_MINIMA });
+        throw converter(erro);
+    }
+    if (!eu) eu = camel(await rpc('registrar_acesso'));
 }
 
 /** Vitrine da tela de entrada: as empresas ativas com a marca delas. */
@@ -199,11 +294,14 @@ export async function obterEmpresaPublica(identificador) {
     return camel(await rpc('obter_empresa_publica', { p_identificador: identificador })) ?? null;
 }
 
-export async function listarEmpresas(_usuario, { busca = '', situacao = 'todas' } = {}) {
+// Sem o logotipo (até 300 KB cada): só a tela de empresas pede com logo.
+const CAMPOS_EMPRESA = 'id,nome,identificador,cor,cor_secundaria,academia,estilo_menu,cantos,fonte,capas_marca,ativa,mensagem,solicitacoes_ativas,aprovador,criado_em';
+
+export async function listarEmpresas(_usuario, { busca = '', situacao = 'todas', comLogo = false } = {}) {
     exigir(pode(atual(), 'ver-empresas'));
     const termo = busca.trim().toLowerCase();
     const [empresas, pessoas] = await Promise.all([
-        ler('empresas', 'select=*&order=nome'),
+        ler('empresas', `select=${comLogo ? '*' : CAMPOS_EMPRESA}&order=nome`),
         ler('perfis', 'select=empresa_id&ativo=eq.true&empresa_id=not.is.null'),
     ]);
     return empresas.map(camel)
@@ -274,14 +372,32 @@ export async function salvarMarca(_usuario, empresaId, entrada) {
 
 // ------------------------------------------------------------------ pessoas --
 
-export async function listarPessoas(_usuario, empresaId, { busca = '', situacao = 'todas' } = {}) {
+export async function listarPessoas(_usuario, empresaId, { busca = '', situacao = 'todas', area = '' } = {}) {
     const usuario = atual();
     exigir(pode(usuario, 'ver-pessoas', { empresaId }));
     const termo = busca.trim().toLowerCase();
     const pessoas = (await ler('perfis', `select=*&empresa_id=eq.${valor(empresaId)}&order=nome`)).map(camel);
     return filtrarVisiveis(usuario, pessoas)
-        .filter((u) => !termo || u.nome.toLowerCase().includes(termo) || u.email.includes(termo))
-        .filter((u) => situacao === 'todas' || (situacao === 'ativas' ? u.ativo : !u.ativo));
+        .filter((u) => !termo || u.nome.toLowerCase().includes(termo) || u.email.includes(termo) || (u.area ?? '').toLowerCase().includes(termo))
+        .filter((u) => situacao === 'todas' || (situacao === 'ativas' ? u.ativo : !u.ativo))
+        .filter((u) => !area || (area === '-' ? !u.area : u.area === area));
+}
+
+/** Áreas (setores) já usadas na empresa, para sugerir ao digitar e filtrar. */
+export async function areasDaEmpresa(empresaId) {
+    if (!empresaId) return [];
+    const usuario = atual();
+    if (!pode(usuario, 'ver-pessoas', { empresaId })) return [];
+    // Mesma consulta de listarPessoas: vem do cache, sem outra ida ao servidor.
+    const linhas = await ler('perfis', `select=*&empresa_id=eq.${valor(empresaId)}&order=nome`);
+    return [...new Set(linhas.map((l) => l.area).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+export async function definirAreaPessoa(_usuario, pessoaId, area) {
+    atual();
+    const salvo = camel(await rpc('definir_area_pessoa', { p_pessoa: pessoaId, p_area: area ?? '' }));
+    if (salvo.id === eu.id) eu = { ...eu, area: salvo.area };
+    return salvo;
 }
 
 export async function listarEquipe() {
@@ -451,6 +567,7 @@ function progressoDe(c, matricula) {
         feitas,
         percentual: aulas.length ? Math.round((feitas / aulas.length) * 100) : 0,
         proximaAulaId: aulas.find((a) => !matricula.aulasConcluidas.includes(a.id))?.id ?? null,
+        proximaAulaTitulo: aulas.find((a) => !matricula.aulasConcluidas.includes(a.id))?.titulo ?? null,
         aprovado: matricula.tentativas.some((t) => t.aprovado),
         melhorNota: melhor >= 0 ? melhor : null,
         tentativasFeitas: matricula.tentativas.length,
@@ -458,7 +575,15 @@ function progressoDe(c, matricula) {
         concluido: Boolean(matricula.concluidoEm),
         concluidoEm: matricula.concluidoEm,
         certificadoId: matricula.certificadoId,
+        prazo: matricula.prazo ?? null,
+        vencido: prazoVencido(matricula),
     };
+}
+
+/** Prazo (data, sem hora) já passou e o curso não foi concluído. */
+function prazoVencido(matricula) {
+    if (!matricula?.prazo || matricula.concluidoEm) return false;
+    return matricula.prazo < new Date().toLocaleDateString('sv-SE'); // AAAA-MM-DD local
 }
 
 /** Curso visível para quem estuda: ativo e liberado para a empresa da pessoa. */
@@ -484,7 +609,7 @@ export async function listarCursos(_usuario, { busca = '' } = {}) {
     const termo = busca.trim().toLowerCase();
     const [cursos, matriculas] = await Promise.all([
         ler('cursos', 'select=*&order=titulo'),
-        ler('matriculas', 'select=curso_id,usuario_id,aulas_concluidas,tentativas,concluido_em,certificado_id'),
+        ler('matriculas', 'select=curso_id,usuario_id,aulas_concluidas,tentativas,concluido_em,certificado_id,prazo'),
     ]);
     return cursos.map((linha) => curso(linha))
         .filter((c) => !termo || c.titulo.toLowerCase().includes(termo))
@@ -504,9 +629,8 @@ export async function listarCursos(_usuario, { busca = '' } = {}) {
 export async function obterCurso(_usuario, cursoId) {
     const usuario = atual();
     const equipe = ehEquipe(usuario.perfil);
-    const c = await lerCurso(cursoId, equipe);
+    const [c, matricula] = await Promise.all([lerCurso(cursoId, equipe), minhaMatriculaEm(cursoId)]);
     exigir(equipe || cursoLiberado(c, usuario));
-    const matricula = await minhaMatriculaEm(cursoId);
     return {
         ...c,
         progresso: podeEstudar(usuario.perfil) ? progressoDe(c, matricula) : null,
@@ -584,6 +708,39 @@ export async function matricular(_usuario, cursoId, pessoaId = null) {
     return progressoDe(c, camel(matricula));
 }
 
+/** Atribui o curso a várias pessoas numa chamada só, com prazo opcional (AAAA-MM-DD). */
+export async function matricularLote(_usuario, cursoId, pessoas, prazo = '') {
+    atual();
+    const resultado = await rpc('matricular_lote', { p_curso: cursoId, p_pessoas: pessoas.map(String), p_prazo: prazo || null });
+    return resultado.matriculados;
+}
+
+/** Cópia inativa do curso (ids novos: progresso e pontos do original não passam para a cópia). */
+export async function duplicarCurso(_usuario, cursoId) {
+    exigir(pode(atual(), 'gerir-cursos'));
+    const c = await lerCurso(cursoId, true);
+    return salvarCurso(null, {
+        ...c,
+        id: null,
+        titulo: `${c.titulo} (cópia)`.slice(0, 150),
+        ativo: false,
+        modulos: c.modulos.map((m) => ({ titulo: m.titulo, aulas: m.aulas.map(({ id: _id, ...a }) => ({ ...a, video: a.videoId ?? '' })) })),
+        avaliacao: { questoes: c.avaliacao.questoes.map(({ id: _id, ...q }) => q) },
+    });
+}
+
+/** Diagnóstico → treinamento: libera o curso para a empresa. */
+export async function liberarCurso(cursoId, empresaId) {
+    exigir(pode(atual(), 'liberar-curso'));
+    return camel(await rpc('liberar_curso', { p_curso: cursoId, p_empresa: empresaId }));
+}
+
+/** Cursos (só id, título e se está ativo) para os seletores da consultoria. */
+export async function listarCursosResumo() {
+    exigir(pode(atual(), 'gerir-cursos'));
+    return (await ler('cursos', 'select=id,titulo,ativo,empresas&order=titulo')).map(camel);
+}
+
 /** Marca a aula como concluída (uma vez só); pontos e conclusão são calculados no servidor. */
 export async function concluirAula(_usuario, cursoId, aulaId) {
     atual();
@@ -636,6 +793,8 @@ export async function perfilGamificacao() {
             primeiro_curso: minhasMatriculas.some((m) => m.concluidoEm),
             nota_maxima: minhasMatriculas.some((m) => m.tentativas.some((t) => t.nota === 100)),
             sequencia_3: sequencia >= 3,
+            voz_ativa: meus.some((p) => p.tipo === 'diagnostico'),
+            melhoria_continua: meus.some((p) => p.tipo === 'kaizen'),
         },
         desafio: {
             meta: DESAFIO_SEMANAL.aulas,
@@ -645,11 +804,21 @@ export async function perfilGamificacao() {
     };
 }
 
-/** Ranking só da própria empresa: nunca mostra pessoas de outras empresas. */
-export async function rankingEmpresa() {
+/**
+ * Ranking por período ('semana' | 'mes' | 'total'). Quem é da empresa vê só a própria;
+ * a equipe escolhe a empresa (vazio = todas). Traz o top 10, a sua posição e as áreas.
+ */
+export async function rankingEmpresa({ periodo = 'total', empresaId = '' } = {}) {
     const usuario = atual();
-    exigir(usuario.empresaId);
-    return (await rpc('ranking_empresa')).map((linha, i) => ({ ...linha, posicao: i + 1, voce: linha.id === usuario.id }));
+    exigir(usuario.empresaId || ehEquipe(usuario.perfil));
+    const r = await rpc('ranking_empresa', { p_periodo: periodo, p_empresa: ehEquipe(usuario.perfil) ? empresaId || null : null });
+    const linha = (l) => ({ ...camel(l), voce: l.id === usuario.id });
+    return {
+        participantes: r.participantes,
+        itens: r.itens.map(linha),
+        voce: r.voce ? linha(r.voce) : null,
+        areas: r.areas.map(camel),
+    };
 }
 
 // ------------------------------------------------------------------- painel --
@@ -705,7 +874,8 @@ export async function atividadeRecente(_usuario, limite = 6) {
 
 // ---------------------------------------------------------------- auditoria --
 
-export const CATEGORIAS_AUDITORIA = ['empresa', 'pessoa', 'convite', 'equipe', 'solicitacao', 'curso', 'matricula', 'aula', 'avaliacao', 'certificado', 'conta'];
+export const CATEGORIAS_AUDITORIA = ['empresa', 'pessoa', 'convite', 'equipe', 'solicitacao', 'curso', 'matricula', 'aula', 'avaliacao', 'certificado',
+    'diagnostico', 'modelo', 'kaizen', 'conta'];
 
 export async function listarAuditoria(_usuario, { de = '', ate = '', empresaId = '', categoria = '', pessoa = '' } = {}, pagina = 1, porPagina = 15) {
     exigir(pode(atual(), 'ver-auditoria'));
@@ -733,7 +903,7 @@ export async function relatorio(_usuario, { empresaId = '', cursoId = '' } = {})
     const escopoEmpresa = ehEquipe(usuario.perfil) ? empresaId : usuario.empresaId;
     const [matriculas, pessoas, cursos, certificados, empresas] = await Promise.all([
         ler('matriculas', 'select=*').then((l) => l.map(camel)),
-        ler('perfis', 'select=id,nome,empresa_id').then((l) => l.map(camel)),
+        ler('perfis', 'select=id,nome,empresa_id,area').then((l) => l.map(camel)),
         ler('cursos', 'select=*').then((l) => l.map((c) => curso(c))),
         ler('certificados', 'select=usuario_id,curso_id').then((l) => l.map(camel)),
         ler('empresas', 'select=id,nome'),
@@ -748,9 +918,10 @@ export async function relatorio(_usuario, { empresaId = '', cursoId = '' } = {})
         .filter(({ curso: c }) => !cursoId || c.id === cursoId)
         .map(({ m, pessoa, curso: c }) => {
             const p = progressoDe(c, m);
-            const atrasado = !m.concluidoEm && new Date(m.ultimaAtividade).getTime() < limiteAtraso;
+            const atrasado = !m.concluidoEm && (p.vencido || new Date(m.ultimaAtividade).getTime() < limiteAtraso);
             return {
-                pessoa: pessoa.nome, pessoaId: pessoa.id, empresa: nomeEmpresa(pessoa.empresaId), curso: c.titulo, cursoId: c.id,
+                pessoa: pessoa.nome, pessoaId: pessoa.id, area: pessoa.area ?? '', prazo: m.prazo ?? null, vencido: p.vencido,
+                empresa: nomeEmpresa(pessoa.empresaId), curso: c.titulo, cursoId: c.id,
                 progresso: p.percentual, nota: p.melhorNota, aprovado: p.aprovado, reprovacoes: m.tentativas.filter((t) => !t.aprovado).length,
                 situacao: m.concluidoEm ? 'concluido' : atrasado ? 'atrasado' : p.feitas === 0 ? 'naoIniciado' : 'andamento',
                 ultimaAtividade: m.ultimaAtividade, concluido: Boolean(m.concluidoEm),
@@ -789,4 +960,266 @@ export async function relatorio(_usuario, { empresaId = '', cursoId = '' } = {})
         linhas,
         diasAtraso: DIAS_ATRASO,
     };
+}
+
+// ------------------------------------------------------ cultura e maturidade --
+// As respostas são anônimas e nunca chegam ao navegador: só os agregados de
+// resultado_diagnostico, que escondem grupos menores que o mínimo de anonimato.
+
+const hoje = () => new Date().toLocaleDateString('sv-SE'); // AAAA-MM-DD local
+
+/** Modelos de diagnóstico (a equipe vê todos; o gestor, os publicados). */
+export async function listarModelos() {
+    exigir(pode(atual(), 'gerir-diagnosticos'));
+    return (await ler('diagnosticos_modelos', 'select=*&order=padrao.desc,titulo')).map(camel);
+}
+
+export async function obterModelo(id) {
+    exigir(pode(atual(), 'gerir-diagnosticos'));
+    const [linha] = await ler('diagnosticos_modelos', `select=*&id=eq.${valor(id)}`);
+    exigir(linha, 'nao-encontrado');
+    return camel(linha);
+}
+
+/** "Clima e cultura" → "clima-e-cultura" (id das dimensões novas). */
+function slug(textoBruto) {
+    return gerarIdentificador(textoBruto).slice(0, 36);
+}
+
+/**
+ * Salva o modelo. Dimensões novas ganham id a partir do nome; perguntas novas, um id curto.
+ * Cada pergunta aponta para a dimensão pelo índice (`dimensaoIndice`) enquanto é editada.
+ */
+export async function salvarModelo(entrada) {
+    exigir(pode(atual(), 'gerir-modelos'));
+    const usados = new Set();
+    const dimensoes = (entrada.dimensoes ?? []).map((d) => {
+        const base = /^[a-z0-9_-]{1,40}$/.test(d.id ?? '') ? d.id : slug(d.nome || 'dimensao');
+        let id = base;
+        for (let n = 2; usados.has(id); n += 1) id = `${base}-${n}`;
+        usados.add(id);
+        return {
+            id, nome: texto(d.nome, 80), descricao: texto(d.descricao, 300), recomendacao: texto(d.recomendacao, 800),
+            cursos: [...new Set(d.cursos ?? [])],
+        };
+    });
+    const idsQ = new Set();
+    const questoes = (entrada.questoes ?? []).map((q) => {
+        let id = /^[a-z0-9_-]{1,40}$/.test(q.id ?? '') && !idsQ.has(q.id) ? q.id : '';
+        while (!id || idsQ.has(id)) id = `q${Math.random().toString(36).slice(2, 8)}`;
+        idsQ.add(id);
+        return { id, dimensao: dimensoes[q.dimensaoIndice]?.id ?? '', texto: texto(q.texto, 300), invertida: Boolean(q.invertida) };
+    });
+    const niveis = (entrada.niveis ?? []).map((n) => texto(n, 40));
+    return camel(await rpc('salvar_modelo_diagnostico', {
+        entrada: {
+            id: entrada.id || null, titulo: entrada.titulo ?? '', descricao: entrada.descricao ?? '', norma: entrada.norma ?? '',
+            interpretacao: entrada.interpretacao === 'risco' ? 'risco' : 'maturidade',
+            niveis: niveis.length === 5 && niveis.every(Boolean) ? niveis : [],
+            publicado: entrada.publicado !== false, dimensoes, questoes,
+        },
+    }));
+}
+
+/** Diagnósticos lançados (com a contagem de respostas). Equipe: de uma empresa ou de todas. */
+export async function listarDiagnosticos({ empresaId = '' } = {}) {
+    const usuario = atual();
+    exigir(pode(usuario, 'ver-cultura'));
+    return (await rpc('listar_diagnosticos', { p_empresa: ehEquipe(usuario.perfil) ? empresaId || null : null })).map(camel);
+}
+
+/** Um diagnóstico com o questionário completo (para responder e para ler o resultado). */
+export async function obterDiagnostico(id) {
+    const usuario = atual();
+    const [[linha], participacao] = await Promise.all([
+        ler('diagnosticos', `select=*,empresa:empresa_id(nome)&id=eq.${valor(id)}`),
+        ler('diagnosticos_participacoes', `select=diagnostico_id&diagnostico_id=eq.${valor(id)}&usuario_id=eq.${valor(usuario.id)}`),
+    ]);
+    exigir(linha, 'nao-encontrado');
+    const d = camel(linha);
+    const aberto = d.situacao === 'aberto' && (!d.fechaEm || d.fechaEm >= hoje());
+    const publico = { todos: ['company_admin', 'student'], gestores: ['company_admin'], funcionarios: ['student'] }[d.publico] ?? [];
+    const respondi = participacao.length > 0;
+    return {
+        ...d,
+        empresaNome: d.empresa?.nome ?? '',
+        aberto,
+        respondi,
+        possoResponder: aberto && d.empresaId === usuario.empresaId && publico.includes(usuario.perfil) && !respondi,
+        possoGerir: ehEquipe(usuario.perfil) || (usuario.perfil === 'company_admin' && usuario.empresaId === d.empresaId),
+    };
+}
+
+export async function criarDiagnostico(entrada) {
+    exigir(pode(atual(), 'gerir-diagnosticos'));
+    return camel(await rpc('criar_diagnostico', {
+        entrada: {
+            empresaId: entrada.empresaId || null,
+            modeloId: entrada.modeloId || null,
+            titulo: entrada.titulo ?? '',
+            publico: entrada.publico,
+            enps: Boolean(entrada.enps),
+            comentarios: Boolean(entrada.comentarios),
+            anonimatoMinimo: Number(entrada.anonimatoMinimo) || 3,
+            fechaEm: entrada.fechaEm || null,
+            extras: (entrada.extras ?? []).filter((x) => texto(x.texto, 300)).map((x) => ({ dimensao: x.dimensao, texto: texto(x.texto, 300) })),
+        },
+    }));
+}
+
+export async function encerrarDiagnostico(id) {
+    atual();
+    return camel(await rpc('encerrar_diagnostico', { p_id: id }));
+}
+
+export async function reabrirDiagnostico(id, fechaEm = '') {
+    atual();
+    return camel(await rpc('reabrir_diagnostico', { p_id: id, p_fecha_em: fechaEm || null }));
+}
+
+export async function excluirDiagnostico(id) {
+    atual();
+    await rpc('excluir_diagnostico', { p_id: id });
+}
+
+/** Envia as respostas (1 a 5 por pergunta), o eNPS (0 a 10) e o comentário opcional. */
+export async function responderDiagnostico(id, { respostas, enps = null, comentario = '' }) {
+    atual();
+    const r = await rpc('responder_diagnostico', {
+        p_id: id,
+        p_respostas: Object.fromEntries(Object.entries(respostas).map(([q, v]) => [q, Number(v)])),
+        p_enps: enps === null || enps === '' ? null : Number(enps),
+        p_comentario: texto(comentario, 600),
+    });
+    return r.pontosGanhos ?? 0;
+}
+
+export async function resultadoDiagnostico(id) {
+    atual();
+    return camel(await rpc('resultado_diagnostico', { p_id: id }));
+}
+
+/** Panorama da consultoria: o diagnóstico mais recente de um modelo em cada empresa. */
+export async function panoramaMaturidade(modeloId) {
+    exigir(pode(atual(), 'ver-panorama'));
+    if (!modeloId) return [];
+    return rpc('panorama_maturidade', { p_modelo: modeloId });
+}
+
+/** Saúde das empresas clientes: engajamento, cursos, kaizen e maturidade. */
+export async function panoramaEmpresas() {
+    exigir(pode(atual(), 'ver-panorama'));
+    return (await rpc('panorama_empresas')).map((e) => ({
+        ...e,
+        economia: Number(e.economia) || 0,
+        horas: Number(e.horas) || 0,
+        taxaConclusao: e.matriculas ? e.concluidas / e.matriculas : 0,
+        indice: indiceEngajamento(e),
+    }));
+}
+
+/** Diagnósticos abertos que a pessoa ainda pode responder. */
+export async function diagnosticosPendentes() {
+    const usuario = atual();
+    if (!usuario.empresaId) return [];
+    return (await listarDiagnosticos()).filter((d) => d.aberto && d.possoResponder && !d.respondi);
+}
+
+// ------------------------------------------------------------------ kaizen --
+
+function kaizenParaTela(linha) {
+    const k = camel(linha);
+    return { ...k, economia: Number(k.economia) || 0, horas: Number(k.horas) || 0, membros: k.membros ?? [], porques: k.porques ?? [] };
+}
+
+export async function listarKaizens({ empresaId = '' } = {}) {
+    const usuario = atual();
+    exigir(pode(usuario, 'ver-kaizen'));
+    return (await rpc('listar_kaizens', { p_empresa: ehEquipe(usuario.perfil) ? empresaId || null : null })).map(kaizenParaTela);
+}
+
+export async function obterKaizen(id) {
+    atual();
+    return kaizenParaTela(await rpc('obter_kaizen', { p_id: id }));
+}
+
+/** Pessoas ativas da empresa (nome e área) para escolher responsável e equipe. */
+export async function colegas(empresaId = '') {
+    const usuario = atual();
+    return rpc('colegas', { p_empresa: ehEquipe(usuario.perfil) ? empresaId || null : null });
+}
+
+export async function salvarKaizen(entrada) {
+    atual();
+    const numero = (v, casas) => {
+        const bruto = String(v ?? '').trim();
+        // "1.500,50" (pt-BR) ou "1500.5" (campo numérico)
+        const n = Number(bruto.includes(',') ? bruto.replace(/\./g, '').replace(',', '.') : bruto);
+        return Number.isFinite(n) && n >= 0 ? Number(n.toFixed(casas)) : -1;
+    };
+    const erros = {};
+    if (!texto(entrada.titulo, 150)) erros.titulo = 'obrigatorio';
+    if (!texto(entrada.problema, 2000)) erros.problema = 'obrigatorio';
+    const economia = numero(entrada.economia || 0, 2);
+    const horas = numero(entrada.horas || 0, 1);
+    if (economia < 0 || economia >= 1e12) erros.economia = 'numero';
+    if (horas < 0 || horas >= 1e9) erros.horas = 'numero';
+    if (Object.keys(erros).length) throw new ErroDados('validacao', erros);
+    return kaizenParaTela(await rpc('salvar_kaizen', {
+        entrada: {
+            id: entrada.id || null, empresaId: entrada.empresaId || null,
+            titulo: entrada.titulo, problema: entrada.problema, situacaoAtual: entrada.situacaoAtual ?? '',
+            porques: (entrada.porques ?? []).map((p) => texto(p, 300)).filter(Boolean).slice(0, 5),
+            causaRaiz: entrada.causaRaiz ?? '', contramedida: entrada.contramedida ?? '', meta: entrada.meta ?? '',
+            resultado: entrada.resultado ?? '', padronizacao: entrada.padronizacao ?? '',
+            dimensao: entrada.dimensao ?? '', area: entrada.area ?? '',
+            responsavelId: entrada.responsavelId || null, membros: entrada.membros ?? [],
+            economia, horas, prazo: entrada.prazo || null,
+        },
+    }));
+}
+
+export async function moverKaizen(id, etapa) {
+    atual();
+    return kaizenParaTela(await rpc('mover_kaizen', { p_id: id, p_etapa: etapa }));
+}
+
+export async function comentarKaizen(id, textoComentario) {
+    atual();
+    if (!texto(textoComentario, 1000)) throw new ErroDados('validacao', { texto: 'obrigatorio' });
+    await rpc('comentar_kaizen', { p_id: id, p_texto: textoComentario });
+}
+
+export async function parecerKaizen(id, textoParecer, destaque) {
+    exigir(ehEquipe(atual().perfil));
+    await rpc('parecer_kaizen', { p_id: id, p_texto: textoParecer ?? '', p_destaque: Boolean(destaque) });
+}
+
+// -------------------------------------------------------- avisos do menu --
+
+/** Contadores discretos no menu: o que espera uma ação de quem está logado. Falhas viram zero. */
+export async function contadoresMenu() {
+    const usuario = atual();
+    const zero = () => 0;
+    const [solicitacoes, cultura, kaizen] = await Promise.all([
+        (async () => {
+            if (!pode(usuario, 'ver-solicitacoes')) return 0;
+            if (!ehEquipe(usuario.perfil) && (await obterEmpresa(usuario.empresaId))?.aprovador !== 'empresa') return 0;
+            return (await ler('solicitacoes', 'select=id&situacao=eq.pendente')).length;
+        })().catch(zero),
+        diagnosticosPendentes().then((l) => l.length).catch(zero),
+        usuario.perfil === 'company_admin'
+            ? ler('kaizens', `select=id&etapa=eq.verificar&empresa_id=eq.${valor(usuario.empresaId)}`).then((l) => l.length).catch(zero)
+            : 0,
+    ]);
+    return { solicitacoes, cultura, kaizen };
+}
+
+// ------------------------------------------------- validação de certificado --
+
+/** Página pública: confere se um código de certificado existe e de quem é. */
+export async function validarCertificado(codigo) {
+    const limpo = texto(codigo, 40).toUpperCase();
+    if (!/^MJC-[0-9A-F]{4}-[0-9A-F]{4}$/.test(limpo)) return null;
+    return (await rpc('validar_certificado', { p_codigo: limpo })) ?? null;
 }

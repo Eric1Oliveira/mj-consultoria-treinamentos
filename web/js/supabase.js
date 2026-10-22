@@ -44,7 +44,12 @@ async function chamar(caminho, { metodo = 'GET', corpo, token, cabecalhos = {} }
         body: corpo === undefined ? undefined : JSON.stringify(corpo),
     });
     const textoResposta = await resposta.text();
-    const dados = textoResposta ? JSON.parse(textoResposta) : null;
+    let dados = null;
+    try {
+        dados = textoResposta ? JSON.parse(textoResposta) : null;
+    } catch {
+        dados = { message: textoResposta };
+    }
     if (!resposta.ok) throw new ErroSupabase(resposta.status, dados);
     return dados;
 }
@@ -65,6 +70,16 @@ async function tokenAtual() {
 
 export const temSessao = () => Boolean(sessao);
 
+/** Id da conta (claim "sub" do token), sem ir ao servidor. null se não houver sessão legível. */
+export function idDaSessao() {
+    try {
+        const carga = sessao.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        return JSON.parse(atob(carga)).sub ?? null;
+    } catch {
+        return null;
+    }
+}
+
 export async function entrarComSenha(email, senha) {
     guardarSessao(await chamar('/auth/v1/token?grant_type=password', { metodo: 'POST', corpo: { email, password: senha } }));
 }
@@ -74,6 +89,36 @@ export async function cadastrar(email, senha) {
     const resposta = await chamar('/auth/v1/signup', { metodo: 'POST', corpo: { email, password: senha } });
     if (resposta?.access_token) guardarSessao(resposta);
     return Boolean(resposta?.access_token);
+}
+
+/** Troca a senha de quem está com a sessão aberta (inclusive a sessão do link de recuperação). */
+export async function atualizarSenha(senha) {
+    const token = await tokenAtual();
+    if (!token) throw new ErroSupabase(401, { message: 'sem sessão' });
+    await chamar('/auth/v1/user', { metodo: 'PUT', corpo: { password: senha }, token });
+}
+
+/** Envia o e-mail de recuperação; o link volta para `voltarPara` com a sessão no endereço. */
+export async function recuperarSenha(email, voltarPara) {
+    await chamar(`/auth/v1/recover?redirect_to=${encodeURIComponent(voltarPara)}`, { metodo: 'POST', corpo: { email } });
+}
+
+/**
+ * Link do e-mail de recuperação: o Supabase devolve "#access_token=…&type=recovery".
+ * Guarda a sessão e diz o que veio (ou o erro, se o link expirou). null = não é um retorno do Auth.
+ */
+export function lerRetornoDoAuth(hash) {
+    const bruto = String(hash || '').replace(/^#/, '');
+    if (!/(^|&)(access_token|error)=/.test(bruto)) return null;
+    const p = new URLSearchParams(bruto);
+    if (p.get('error')) return { erro: p.get('error_code') || p.get('error') };
+    guardarSessao({
+        access_token: p.get('access_token'),
+        refresh_token: p.get('refresh_token'),
+        expires_at: Number(p.get('expires_at')) || undefined,
+        expires_in: Number(p.get('expires_in')) || 3600,
+    });
+    return { tipo: p.get('type') || 'login' };
 }
 
 export async function sair() {

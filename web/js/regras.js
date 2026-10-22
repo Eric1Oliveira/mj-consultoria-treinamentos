@@ -1,9 +1,8 @@
 // Regras de negócio da plataforma.
 //
-// ATENÇÃO: nesta versão sem backend as permissões são DEMONSTRATIVAS. Qualquer
-// pessoa com as ferramentas do navegador consegue burlá-las. Quando o Supabase
-// entrar, cada regra daqui vira política de acesso (RLS) no servidor; no
-// navegador elas continuam só para mostrar ou esconder botões.
+// Quem decide de verdade é o banco (RLS e funções em supabase/schema.sql). As regras
+// daqui espelham as do servidor só para a interface mostrar ou esconder o que cabe a
+// cada perfil; burlá-las no navegador não dá acesso a nada.
 
 export const PERFIS = ['admin', 'consultant', 'company_admin', 'student'];
 
@@ -67,6 +66,18 @@ export function pode(usuario, acao, alvo = {}) {
         case 'decidir-solicitacao':
             if (ehEquipe(perfil)) return true;
             return perfil === 'company_admin' && alvo.empresa?.id === usuario.empresaId && alvo.empresa?.aprovador === 'empresa';
+        case 'ver-cultura':
+        case 'ver-kaizen':
+        case 'ver-ranking':
+            return ehEquipe(perfil) || Boolean(usuario.empresaId);
+        case 'gerir-diagnosticos':
+            return ehEquipe(perfil) || perfil === 'company_admin';
+        case 'gerir-modelos':
+        case 'ver-panorama':
+        case 'liberar-curso':
+            return ehEquipe(perfil);
+        case 'definir-area':
+            return podeGerirPessoa(usuario, alvo.pessoa) || (perfil === 'company_admin' && alvo.pessoa?.id === usuario.id);
         default:
             return false;
     }
@@ -291,8 +302,8 @@ export function cursoCompleto(curso, matricula) {
 
 // ------------------------------------------------------------ gamificação --
 
-/** Pontos por ação. Cada ação vale uma única vez (reenviar não soma de novo). */
-export const PONTOS = { aula: 10, avaliacao: 30, notaMaxima: 20, curso: 50, desafio: 25 };
+/** Pontos por ação (os mesmos do servidor). Cada ação vale uma única vez (reenviar não soma de novo). */
+export const PONTOS = { aula: 10, avaliacao: 30, notaMaxima: 20, curso: 50, desafio: 25, kaizenIdeia: 10, kaizen: 60, diagnostico: 15 };
 
 /** Pontos mínimos de cada nível (os nomes ficam em textos.js). */
 export const NIVEIS = [0, 100, 250, 500, 1000];
@@ -318,6 +329,70 @@ export function sequenciaDias(datasIso, agora = new Date()) {
         dia.setDate(dia.getDate() - 1);
     }
     return total;
+}
+
+// --------------------------------------------------- cultura e maturidade --
+
+/**
+ * Nível de maturidade (0 a 4) a partir da nota 0–100: faixas de 20 pontos,
+ * como os 5 níveis da autoavaliação da ISO 9004. Os nomes ficam em textos.js
+ * (ou vêm do próprio modelo, ex.: a escada de Hudson).
+ */
+export function nivelMaturidade(nota) {
+    if (nota === null || nota === undefined) return null;
+    return Math.max(0, Math.min(4, Math.floor(Number(nota) / 20)));
+}
+
+/** Leitura de risco psicossocial por dimensão: nota alta = condição favorável = risco baixo. */
+export function faixaRisco(nota) {
+    if (nota === null || nota === undefined) return null;
+    if (nota < 50) return 'alto';
+    if (nota < 70) return 'moderado';
+    return 'baixo';
+}
+
+/** Diferença entre a visão da liderança e a da equipe que vira "ponto cego". */
+export const GAP_PONTO_CEGO = 15;
+
+/** eNPS (de -100 a 100): zona de leitura usual do mercado. */
+export function zonaEnps(score) {
+    if (score === null || score === undefined) return null;
+    if (score >= 50) return 'excelencia';
+    if (score >= 10) return 'qualidade';
+    if (score >= -10) return 'aperfeicoamento';
+    return 'critica';
+}
+
+// ----------------------------------------------------------------- kaizen --
+
+/** Etapas do quadro, na ordem do PDCA (planejar, executar, verificar, agir/padronizar). */
+export const ETAPAS_KAIZEN = ['ideia', 'planejar', 'executar', 'verificar', 'concluido'];
+
+export function codigoKaizen(numero) {
+    return `KZ-${String(numero ?? 0).padStart(3, '0')}`;
+}
+
+/** Quem pode mexer no kaizen (o servidor confere de novo). Concluir fica com o gestor ou a consultoria. */
+export function podeEditarKaizen(usuario, k) {
+    if (!usuario?.ativo || !k) return false;
+    if (ehEquipe(usuario.perfil)) return true;
+    if (usuario.empresaId !== k.empresaId) return false;
+    return usuario.perfil === 'company_admin' || [k.autorId, k.responsavelId, ...(k.membros ?? [])].includes(usuario.id);
+}
+
+// ------------------------------------------------------------- engajamento --
+
+/**
+ * Índice de engajamento da empresa (0–100), para comparar clientes:
+ * 40% pessoas ativas nos últimos 30 dias, 30% taxa de conclusão dos cursos e
+ * 30% ritmo de pontos (100 pontos por pessoa em 30 dias = nota cheia).
+ */
+export function indiceEngajamento({ pessoas = 0, ativos30 = 0, pontos30 = 0, matriculas = 0, concluidas = 0 } = {}) {
+    if (!pessoas) return 0;
+    const atividade = Math.min(1, ativos30 / pessoas);
+    const conclusao = matriculas ? concluidas / matriculas : 0;
+    const ritmo = Math.min(1, pontos30 / pessoas / 100);
+    return Math.round((atividade * 0.4 + conclusao * 0.3 + ritmo * 0.3) * 100);
 }
 
 // ------------------------------------------------------------- diversos --

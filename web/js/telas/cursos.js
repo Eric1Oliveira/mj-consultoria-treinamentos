@@ -6,7 +6,7 @@
 import * as dados from '../dados.js';
 import { ehEquipe } from '../regras.js';
 import { t, formatarData } from '../textos.js';
-import { html, icone, opcao, avatar, anunciar, irPara, mostrarErro, desenharEm, capa, celebrar } from '../app.js';
+import { html, icone, opcao, avatar, anunciar, mostrarErro, desenharEm, capa, celebrar, perguntar, enderecoDe } from '../app.js';
 
 const filtro = { busca: '' };
 
@@ -14,6 +14,15 @@ function barra(percentual, rotuloId) {
     return html`<div class="barra" role="progressbar" aria-labelledby="${rotuloId}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentual}">
         <span class="barra-preenchida" data-progresso="${percentual}"></span>
     </div>`;
+}
+
+/** "· até 12 nov" (ou "prazo vencido") para quem tem prazo e ainda não concluiu. */
+function prazoCurto(p) {
+    if (!p?.prazo || p.concluido) return '';
+    const data = formatarData(`${p.prazo}T12:00:00`, { day: 'numeric', month: 'short' });
+    return p.vencido
+        ? html` <span class="selo selo--perigo">${icone('clock', 'icone icone--p')}${t('cursos.prazoVencido', { data })}</span>`
+        : html` <span class="selo selo--neutro">${icone('clock', 'icone icone--p')}${t('cursos.prazoAte', { data })}</span>`;
 }
 
 function rotuloAcao(p) {
@@ -44,7 +53,7 @@ function cartao(usuario, c, nomesEmpresas) {
             <p class="curso-meta">${t('cursos.turma', { matriculados: c.matriculados, concluidos: c.concluidos })}</p>
             <p class="curso-meta">${t('cursos.liberadoPara')}: ${c.empresas.length ? c.empresas.map((id) => nomesEmpresas[id]).filter(Boolean).join(', ') : t('cursos.nenhumaEmpresa')}</p>` : ''}
         ${p?.matriculado ? html`
-            <p class="curso-progresso" id="progresso-${c.id}">${t('cursos.progresso', { p: p.percentual })}</p>
+            <p class="curso-progresso" id="progresso-${c.id}">${t('cursos.progresso', { p: p.percentual })}${prazoCurto(p)}</p>
             ${barra(p.percentual, `progresso-${c.id}`)}` : ''}
         <div class="acoes acoes--p curso-acoes">
             <a class="botao ${equipe ? 'botao--secundario' : 'botao--primario'} botao--p" href="#/cursos/${c.id}">${equipe ? t('cursos.ver') : rotuloAcao(p)}<span class="sr-only"> – ${c.titulo}</span></a>
@@ -167,6 +176,11 @@ async function blocoMatricular(usuario, curso) {
                     <span class="linha-principal">${p.nome}${equipe ? html`<span class="linha-sub">${p.empresaNome}</span>` : ''}</span>
                 </label>`)}
             </fieldset>
+            <div class="campo">
+                <label for="atribuir-prazo">${t('cursos.prazo')} <span class="rotulo-opcional">(${t('comum.opcional')})</span></label>
+                <input id="atribuir-prazo" name="prazo" type="date" min="${new Date().toLocaleDateString('sv-SE')}" aria-describedby="atribuir-prazo-dica">
+                <p id="atribuir-prazo-dica" class="campo-dica">${t('cursos.prazoDica')}</p>
+            </div>
             <button type="submit" class="botao botao--primario botao--largo" data-atribuir disabled>${icone('send', 'icone icone--p')}<span data-atribuir-rotulo>${t('cursos.atribuirBotao', { n: 0 })}</span></button>
         </form>` : html`<p class="tudo-certo">${icone('check', 'icone icone--p')}${t('cursos.ninguem')}</p>`}
     </section>`;
@@ -195,6 +209,7 @@ function blocoProgresso(curso) {
         <h2 id="progresso-titulo" class="bloco-titulo">${p.concluido ? t('cursos.concluidoEm', { data: formatarData(p.concluidoEm, { dateStyle: 'medium' }) }) : t('painel.progressoAulas', { feitas: p.feitas, total: p.total })}</h2>
         <p class="progresso-numero" id="curso-progresso"><span class="sr-only">${t('cursos.progresso', { p: p.percentual })}</span><span aria-hidden="true">${p.percentual}<small>%</small></span></p>
         ${barra(p.percentual, 'curso-progresso')}
+        ${p.prazo && !p.concluido ? html`<p class="bloco-nota progresso-prazo">${prazoCurto(p)}</p>` : ''}
     </section>`;
 }
 
@@ -216,7 +231,8 @@ async function detalhe(usuario, id, recarregar) {
                     <p class="curso-hero-meta">${t('cursos.resumo', { modulos: curso.modulos.length, aulas: curso.modulos.reduce((s, m) => s + m.aulas.length, 0), horas: curso.cargaHoraria })}${!curso.ativo ? html` <span class="selo selo--neutro">${t('cursos.inativo')}</span>` : ''}</p>
                     <div class="curso-hero-acoes">
                         ${acaoCurso(curso)}
-                        ${equipe ? html`<a class="botao botao--claro-contorno" href="#/cursos/${curso.id}/editar">${t('cursos.editar')}</a>` : ''}
+                        ${equipe ? html`<a class="botao botao--claro-contorno" href="#/cursos/${curso.id}/editar">${t('cursos.editar')}</a>
+                            <button type="button" class="botao botao--claro-contorno" data-duplicar>${icone('copy', 'icone icone--p')}${t('cursos.duplicar')}</button>` : ''}
                     </div>
                 </div>
             </header>
@@ -247,6 +263,19 @@ async function detalhe(usuario, id, recarregar) {
                     mostrarErro(erro);
                 }
             });
+            raiz.querySelector('[data-duplicar]')?.addEventListener('click', async (evento) => {
+                const ok = await perguntar({ titulo: t('cursos.duplicarTitulo', { titulo: curso.titulo }), texto: t('cursos.duplicarTexto'), confirmar: t('cursos.duplicar') });
+                if (!ok) return;
+                evento.target.disabled = true;
+                try {
+                    const copia = await dados.duplicarCurso(usuario, curso.id);
+                    anunciar(t('cursos.duplicado'));
+                    window.location.hash = `#/cursos/${copia.id}/editar`;
+                } catch (erro) {
+                    evento.target.disabled = false;
+                    mostrarErro(erro);
+                }
+            });
             const form = raiz.querySelector('[data-form="matricular"]');
             if (form) {
                 const marcadas = () => [...form.querySelectorAll('[name="pessoa"]:checked')];
@@ -271,11 +300,11 @@ async function detalhe(usuario, id, recarregar) {
                     if (!ids.length) return;
                     form.querySelector('[data-atribuir]').disabled = true;
                     try {
-                        for (const id of ids) await dados.matricular(usuario, curso.id, id);
-                        anunciar(t('cursos.atribuidos', { n: ids.length }));
+                        const n = await dados.matricularLote(usuario, curso.id, ids, form.prazo.value);
+                        anunciar(t('cursos.atribuidos', { n }));
                         await recarregar();
                     } catch (erro) {
-                        mostrarErro(erro);
+                        mostrarErro(erro, form);
                         contar();
                     }
                 });
@@ -478,6 +507,14 @@ function definir(objeto, caminho, valor) {
     partes.reduce((no, parte) => no[parte], objeto)[ultima] = valor;
 }
 
+/** Botões ↑ ↓ para reordenar módulos, aulas e questões. */
+function mover(lista, total, indice, posicao, rotulo) {
+    if (total < 2) return '';
+    const atributos = (direcao) => html`data-editor="mover" data-lista="${lista}" data-direcao="${direcao}" data-m="${posicao.m ?? ''}" data-a="${posicao.a ?? ''}" data-q="${posicao.q ?? ''}"`;
+    return html`<button type="button" class="botao-icone botao-icone--p" ${atributos(-1)} ${indice === 0 ? html`disabled` : ''} aria-label="${t('editor.subir', { item: rotulo })}">${icone('subir', 'icone icone--p')}</button>
+        <button type="button" class="botao-icone botao-icone--p" ${atributos(1)} ${indice === total - 1 ? html`disabled` : ''} aria-label="${t('editor.descer', { item: rotulo })}">${icone('descer', 'icone icone--p')}</button>`;
+}
+
 function estrutura(estado) {
     const { modulos, avaliacao } = estado;
     return html`
@@ -487,7 +524,10 @@ function estrutura(estado) {
                 ${modulos.map((m, mi) => html`<li class="editor-modulo">
                     <div class="editor-cabeca">
                         <h3 class="subbloco-titulo">${t('editor.modulo', { n: mi + 1 })}</h3>
-                        ${modulos.length > 1 ? html`<button type="button" class="botao botao--fantasma botao--p" data-editor="rm-modulo" data-m="${mi}">${t('editor.removerModulo', { n: mi + 1 })}</button>` : ''}
+                        <span class="acoes acoes--p">
+                            ${mover('modulo', modulos.length, mi, { m: mi }, t('editor.modulo', { n: mi + 1 }))}
+                            ${modulos.length > 1 ? html`<button type="button" class="botao botao--fantasma botao--p" data-editor="rm-modulo" data-m="${mi}">${t('editor.removerModulo', { n: mi + 1 })}</button>` : ''}
+                        </span>
                     </div>
                     <div class="campo">
                         <label for="ed-m${mi}">${t('editor.tituloModulo')}</label>
@@ -496,7 +536,10 @@ function estrutura(estado) {
                     ${m.aulas.length ? html`<ol class="editor-lista" role="list">${m.aulas.map((a, ai) => html`<li class="editor-aula">
                         <div class="editor-cabeca">
                             <h4 class="editor-aula-titulo">${t('editor.aula', { n: ai + 1 })}</h4>
-                            <button type="button" class="botao botao--fantasma botao--p" data-editor="rm-aula" data-m="${mi}" data-a="${ai}">${t('editor.removerAula', { n: ai + 1 })}<span class="sr-only"> – ${t('editor.modulo', { n: mi + 1 })}</span></button>
+                            <span class="acoes acoes--p">
+                                ${mover('aula', m.aulas.length, ai, { m: mi, a: ai }, `${t('editor.aula', { n: ai + 1 })} – ${t('editor.modulo', { n: mi + 1 })}`)}
+                                <button type="button" class="botao botao--fantasma botao--p" data-editor="rm-aula" data-m="${mi}" data-a="${ai}">${t('editor.removerAula', { n: ai + 1 })}<span class="sr-only"> – ${t('editor.modulo', { n: mi + 1 })}</span></button>
+                            </span>
                         </div>
                         <div class="grade-aula">
                             <div class="campo">
@@ -551,6 +594,7 @@ function estrutura(estado) {
                     </label>
                 </li>`)}</ol>
                 <div class="acoes acoes--p">
+                    ${mover('questao', avaliacao.questoes.length, qi, { q: qi }, t('editor.questao', { n: qi + 1 }))}
                     ${q.alternativas.length < 6 ? html`<button type="button" class="botao botao--secundario botao--p" data-editor="add-alt" data-q="${qi}">${t('editor.addAlternativa')}<span class="sr-only"> – ${t('editor.questao', { n: qi + 1 })}</span></button>` : ''}
                     <button type="button" class="botao botao--fantasma botao--p" data-editor="rm-questao" data-q="${qi}">${t('editor.removerQuestao', { n: qi + 1 })}</button>
                 </div>
@@ -667,6 +711,18 @@ async function editor(usuario, id) {
                     case 'add-alt':
                         estado.avaliacao.questoes[q].alternativas.push('');
                         return redesenhar(`ed-q${q}-alt${estado.avaliacao.questoes[q].alternativas.length - 1}`);
+                    case 'mover': {
+                        const direcao = Number(botao.dataset.direcao);
+                        const [itens, de, foco] = {
+                            modulo: [estado.modulos, m, (i) => `ed-m${i}`],
+                            aula: [estado.modulos[m]?.aulas, a, (i) => `ed-m${m}-a${i}`],
+                            questao: [estado.avaliacao.questoes, q, (i) => `ed-q${i}`],
+                        }[botao.dataset.lista];
+                        const para = de + direcao;
+                        if (!itens || para < 0 || para >= itens.length) return undefined;
+                        [itens[de], itens[para]] = [itens[para], itens[de]];
+                        return redesenhar(foco(para));
+                    }
                     default:
                         return undefined;
                 }
@@ -731,6 +787,7 @@ export async function telaCertificado({ usuario, parametros }) {
                         <span class="certificado-selo" aria-hidden="true">${icone('award')}</span>
                         <p class="certificado-codigo">${t('certificado.codigo', { codigo: c.codigo })}</p>
                     </div>
+                    <p class="certificado-validacao">${t('certificado.validacao', { endereco: enderecoDe(`validar/${c.codigo}`) })}</p>
                 </div>
             </article>`,
         montar(raiz) {

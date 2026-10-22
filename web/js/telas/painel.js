@@ -1,9 +1,10 @@
 // Painel inicial. Muda conforme o perfil; tudo vem de dados.js (cursos, pontos, matrículas).
 
 import * as dados from '../dados.js';
-import { ehEquipe, podeEstudar, primeiroNome, pode, PONTOS, NIVEIS } from '../regras.js';
-import { t, formatarNumero, formatarPercentual, formatarData, formatarRelativo } from '../textos.js';
-import { html, icone, avatar, fraseAtividade, capa, mapaSvg } from '../app.js';
+import { ehEquipe, podeEstudar, primeiroNome, pode, PONTOS, NIVEIS, ETAPAS_KAIZEN, codigoKaizen } from '../regras.js';
+import { t, tn, formatarNumero, formatarPercentual, formatarData, formatarRelativo } from '../textos.js';
+import { html, icone, avatar, fraseAtividade, capa, mapaSvg, desenharEm } from '../app.js';
+import { barraNota, seloLeitura } from '../graficos.js';
 import { barra, rotuloAcao } from './cursos.js';
 
 function indicador(rotulo, valor, destaque = false) {
@@ -144,20 +145,140 @@ function blocoGamificacao(g) {
 }
 
 function blocoRanking(ranking) {
+    const top = ranking.itens.slice(0, 5);
+    const voceFora = ranking.voce && !top.some((r) => r.voce) ? ranking.voce : null;
+    const linha = (r) => html`<li class="ranking-item ${r.voce ? 'ranking-item--voce' : ''}">
+        <span class="ranking-posicao">${t('gamificacao.posicao', { n: r.posicao })}</span>
+        ${avatar(r.nome)}
+        <span class="linha-principal">${r.nome}${r.voce ? html` <span class="selo selo--marca">${t('comum.voce')}</span>` : ''}</span>
+        <span class="ranking-pontos">${t('gamificacao.pontosDe', { n: formatarNumero(r.pontos) })}</span>
+    </li>`;
     return html`<section class="painel-bloco" aria-labelledby="painel-ranking">
-        <div class="bloco-cabecalho">
-            <h2 id="painel-ranking" class="bloco-titulo">${t('gamificacao.ranking')}</h2>
-            <p class="bloco-nota">${t('gamificacao.rankingNota')}</p>
+        <div class="bloco-cabecalho bloco-cabecalho--linha">
+            <h2 id="painel-ranking" class="bloco-titulo">${t('painel.rankingMes')}</h2>
+            <a href="#/ranking">${t('painel.verTodas')}</a>
         </div>
-        ${ranking.some((r) => r.pontos > 0) ? html`<ol class="ranking" role="list">
-            ${ranking.map((r) => html`<li class="ranking-item ${r.voce ? 'ranking-item--voce' : ''}">
-                <span class="ranking-posicao">${t('gamificacao.posicao', { n: r.posicao })}</span>
-                ${avatar(r.nome)}
-                <span class="linha-principal">${r.nome}${r.voce ? html` <span class="selo selo--marca">${t('comum.voce')}</span>` : ''}</span>
-                <span class="ranking-pontos">${t('gamificacao.pontosDe', { n: formatarNumero(r.pontos) })}</span>
-            </li>`)}
-        </ol>` : html`<p class="vazio">${t('gamificacao.rankingVazio')}</p>`}
+        ${top.some((r) => r.pontos > 0) ? html`<ol class="ranking" role="list">${top.map(linha)}</ol>
+            ${voceFora ? html`<p class="ranking-separador" aria-hidden="true">···</p><ol class="ranking" role="list">${linha(voceFora)}</ol>` : ''}`
+            : html`<p class="vazio">${t('gamificacao.rankingVazio')}</p>`}
     </section>`;
+}
+
+// --------------------------------------------------- cultura e kaizen --
+
+/** Convite para responder o diagnóstico de cultura que está aberto. */
+function blocoPesquisaPendente(pendentes) {
+    if (!pendentes?.length) return '';
+    const d = pendentes[0];
+    return html`<section class="chamada" aria-labelledby="painel-pesquisa">
+        <span class="chamada-icone" aria-hidden="true">${icone('bussola')}</span>
+        <div class="chamada-texto">
+            <h2 id="painel-pesquisa" class="bloco-titulo">${t('painel.pesquisaTitulo')}</h2>
+            <p class="bloco-nota">${t('painel.pesquisaTexto', { titulo: d.titulo, min: Math.max(3, Math.round(d.perguntas / 4)) })}</p>
+        </div>
+        <a class="botao botao--primario" href="#/cultura/${d.id}/responder">${t('cultura.responder')}${icone('arrow', 'icone icone--p')}</a>
+    </section>`;
+}
+
+/** Retrato da cultura da empresa (gestor): nota geral, nível e adesão do diagnóstico mais recente. */
+function blocoCulturaEmpresa(cultura) {
+    if (!cultura) {
+        return html`<section class="painel-bloco" aria-labelledby="painel-cultura">
+            <h2 id="painel-cultura" class="bloco-titulo">${t('painel.culturaTitulo')}</h2>
+            <p class="bloco-nota">${t('painel.culturaVazia')}</p>
+            <a class="botao botao--primario botao--p" href="#/cultura/novo">${t('cultura.lancarPrimeiro')}</a>
+        </section>`;
+    }
+    const { d, r } = cultura;
+    return html`<section class="painel-bloco" aria-labelledby="painel-cultura">
+        <div class="bloco-cabecalho bloco-cabecalho--linha">
+            <h2 id="painel-cultura" class="bloco-titulo">${t('painel.culturaTitulo')}</h2>
+            <a href="#/cultura/${d.id}">${t('cultura.verResultado')}</a>
+        </div>
+        <p class="bloco-nota">${d.titulo}</p>
+        ${r.oculto ? html`<p class="nota">${icone('lock', 'icone icone--p')}${t('cultura.aguardando', { n: r.respondentes, min: r.anonimatoMinimo })}</p>` : html`
+            <div class="cultura-resumo">
+                <span class="cultura-resumo-nota">${r.geral}</span>
+                ${seloLeitura(r.geral, d)}
+            </div>
+            <ul class="barras-lista" role="list">${[...(r.dimensoes ?? [])].filter((x) => x.score !== null).sort((a, b) => a.score - b.score).slice(0, 3).map((x) => html`<li>
+                <span class="barras-rotulo">${d.dimensoes?.find((y) => y.id === x.id)?.nome ?? x.id}</span>${barraNota(x.score)}
+            </li>`)}</ul>
+            <p class="bloco-nota">${t('painel.culturaFracas')}</p>`}
+    </section>`;
+}
+
+function blocoCulturaCarregando() {
+    return html`<section class="painel-bloco" aria-labelledby="painel-cultura">
+        <h2 id="painel-cultura" class="bloco-titulo">${t('painel.culturaTitulo')}</h2>
+        <p class="bloco-nota">${t('comum.carregando')}</p>
+    </section>`;
+}
+
+/** Pipeline do kaizen: quantos em cada etapa e os que aguardam a verificação do gestor. */
+function blocoKaizen(kaizens, usuario) {
+    const ativos = kaizens.filter((k) => k.etapa !== 'arquivado');
+    const aVerificar = usuario.perfil === 'company_admin' ? ativos.filter((k) => k.etapa === 'verificar') : [];
+    const meus = usuario.perfil === 'student' ? ativos.filter((k) => [k.autorId, k.responsavelId, ...k.membros].includes(usuario.id)) : [];
+    return html`<section class="painel-bloco" aria-labelledby="painel-kaizen">
+        <div class="bloco-cabecalho bloco-cabecalho--linha">
+            <h2 id="painel-kaizen" class="bloco-titulo">${t('painel.kaizenTitulo')}</h2>
+            <a href="#/kaizen">${t('painel.verTodas')}</a>
+        </div>
+        ${ativos.length ? html`
+            <ol class="funil" role="list">${ETAPAS_KAIZEN.map((e) => html`<li class="funil-etapa"><span class="funil-numero">${ativos.filter((k) => k.etapa === e).length}</span><span class="funil-nome">${t(`kaizen.etapas.${e}`)}</span></li>`)}</ol>
+            ${aVerificar.length ? html`<p class="nota nota--aviso">${icone('clock', 'icone icone--p')}${t('painel.kaizenVerificar', { n: aVerificar.length })}</p>` : ''}
+            ${meus.length ? html`<ul class="linhas" role="list">${meus.slice(0, 3).map((k) => html`<li class="linha linha--compacta">
+                <span class="linha-principal"><a class="linha-link" href="#/kaizen/${k.id}">${codigoKaizen(k.numero)} · ${k.titulo}</a><span class="linha-sub">${t(`kaizen.etapas.${k.etapa}`)}</span></span>
+            </li>`)}</ul>` : ''}`
+            : html`<p class="bloco-nota">${t('painel.kaizenVazio')}</p>`}
+        <a class="botao botao--secundario botao--p" href="#/kaizen/novo">${icone('lampada', 'icone icone--p')}${t('kaizen.novo')}</a>
+    </section>`;
+}
+
+/** Carteira da consultoria: engajamento, maturidade e kaizen de cada empresa (as que pedem atenção primeiro). */
+function blocoCarteira(carteira) {
+    if (!carteira?.length) return '';
+    const ordenada = [...carteira].sort((a, b) => a.indice - b.indice);
+    return html`<section class="painel-bloco" aria-labelledby="painel-carteira">
+        <div class="bloco-cabecalho bloco-cabecalho--linha">
+            <h2 id="painel-carteira" class="bloco-titulo">${t('painel.carteiraTitulo')}</h2>
+            <a href="#/cultura">${t('painel.verPanorama')}</a>
+        </div>
+        <p class="bloco-nota">${t('painel.carteiraNota')}</p>
+        <div class="tabela-rolagem" tabindex="0" role="region" aria-labelledby="painel-carteira">
+            <table class="tabela tabela--cartoes">
+                <thead><tr>
+                    <th scope="col">${t('comum.empresa')}</th>
+                    <th scope="col">${t('painel.engajamento')}</th>
+                    <th scope="col">${t('painel.maturidade')}</th>
+                    <th scope="col" class="num">${t('painel.kaizens')}</th>
+                </tr></thead>
+                <tbody>${ordenada.map((e) => html`<tr>
+                    <th scope="row"><a class="linha-link" href="#/empresas/${e.id}">${e.nome}</a><span class="linha-sub">${t('painel.ativos30', { n: e.ativos30, total: e.pessoas })}</span></th>
+                    <td data-rotulo="${t('painel.engajamento')}">${barraNota(e.indice, t('painel.engajamento'))}</td>
+                    <td data-rotulo="${t('painel.maturidade')}">${e.maturidade?.geral !== null && e.maturidade?.geral !== undefined
+                        ? html`<a class="linha-link" href="#/cultura/${e.maturidade.diagnosticoId}">${e.maturidade.geral}</a> ${seloLeitura(e.maturidade.geral, e.maturidade)}`
+                        : html`<a class="secao-link" href="#/cultura/novo?empresa=${e.id}">${t('cultura.lancar')}</a>`}</td>
+                    <td class="num" data-rotulo="${t('painel.kaizens')}">${formatarNumero(e.kaizensAbertos)}<span class="linha-sub">${tn('painel.kaizenConcluidoUm', 'painel.kaizensConcluidos', e.kaizensConcluidos)}</span></td>
+                </tr>`)}</tbody>
+            </table>
+        </div>
+    </section>`;
+}
+
+/** O valor da promessa se ela já terminou (ou termina em `ms`); senão `undefined`, sem esperar. */
+async function seJaPronto(promessa, ms = 40) {
+    const pendente = Symbol('pendente');
+    const valor = await Promise.race([promessa, new Promise((ok) => setTimeout(() => ok(pendente), ms))]);
+    return valor === pendente ? undefined : valor;
+}
+
+async function culturaDaEmpresa() {
+    const lista = await dados.listarDiagnosticos();
+    const d = lista.find((x) => x.respondentes > 0) ?? lista[0];
+    if (!d) return null;
+    return { d, r: await dados.resultadoDiagnostico(d.id) };
 }
 
 // ------------------------------------------------------------ gestão --
@@ -168,8 +289,9 @@ function blocoAcoes(usuario) {
     const acoes = [
         gestor ? null : { href: '#/empresas/nova', icone: 'building', chave: 'novaEmpresa', pode: pode(usuario, 'gerir-empresas') },
         { href: '#/cursos', icone: 'book', chave: gestor ? 'atribuir' : 'cursos', pode: true },
+        { href: '#/cultura/novo', icone: 'bussola', chave: 'diagnostico', pode: pode(usuario, 'gerir-diagnosticos') },
         { href: '#/pessoas', icone: 'send', chave: 'convidar', pode: pode(usuario, 'ver-pessoas') },
-        gestor ? { href: '#/marca', icone: 'palette', chave: 'marca', pode: pode(usuario, 'personalizar-marca') } : null,
+        gestor ? { href: '#/kaizen', icone: 'ciclo', chave: 'kaizen', pode: pode(usuario, 'ver-kaizen') } : null,
         { href: '#/relatorios', icone: 'chart', chave: 'relatorios', pode: pode(usuario, 'ver-relatorios') },
     ].filter((a) => a?.pode);
     return html`<section class="secao" aria-labelledby="painel-acoes">
@@ -227,24 +349,6 @@ function blocoAtencao(linhas, equipe) {
     </section>`;
 }
 
-function blocoEmpresas(empresas) {
-    return html`<section class="painel-bloco" aria-labelledby="painel-empresas">
-        <div class="bloco-cabecalho bloco-cabecalho--linha">
-            <h2 id="painel-empresas" class="bloco-titulo">${t('painel.empresasTitulo')}</h2>
-            <a href="#/empresas">${t('painel.verTodas')}</a>
-        </div>
-        <ul class="linhas" role="list">
-            ${empresas.map((e) => html`
-                <li class="linha">
-                    <span class="ponto-cor" data-cor="${e.cor ?? ''}" aria-hidden="true"></span>
-                    <span class="linha-principal">${e.nome}</span>
-                    <span class="linha-meta">${t('painel.pessoasAtivasEmpresa', { n: formatarNumero(e.pessoasAtivas) })}</span>
-                    ${e.ativa ? '' : html`<span class="selo selo--neutro">${t('painel.inativa')}</span>`}
-                </li>`)}
-        </ul>
-    </section>`;
-}
-
 function blocoAtividade(eventos) {
     return html`<section class="painel-bloco" aria-labelledby="painel-atividade">
         <div class="bloco-cabecalho"><h2 id="painel-atividade" class="bloco-titulo">${t('painel.atividade')}</h2></div>
@@ -264,40 +368,52 @@ export async function tela({ usuario, empresa }) {
     const estuda = podeEstudar(usuario.perfil);
     const gere = pode(usuario, 'ver-relatorios');
     const gestor = usuario.perfil === 'company_admin';
-    const [resumo, atividade, cursos, gamificacao, ranking, relatorio, todasEmpresas] = await Promise.all([
+    const equipe = ehEquipe(usuario.perfil);
+    // Blocos de cultura, kaizen e ranking são extras: se falharem, o painel continua.
+    const opcional = (promessa) => promessa.catch((erro) => {
+        console.error(erro);
+        return null;
+    });
+    // A cultura da empresa precisa de duas idas em fila: não segura o painel; entra quando chega.
+    const culturaPromessa = gestor ? opcional(culturaDaEmpresa()) : null;
+    const [resumo, atividade, cursos, gamificacao, ranking, relatorio, carteira, pendentes, kaizens] = await Promise.all([
         dados.resumoPainel(usuario),
         dados.atividadeRecente(usuario, 6),
         estuda ? dados.listarCursos(usuario) : [],
         estuda && !gestor ? dados.perfilGamificacao(usuario) : null,
-        usuario.empresaId ? dados.rankingEmpresa(usuario) : null,
+        usuario.empresaId ? opcional(dados.rankingEmpresa({ periodo: 'mes' })) : null,
         gere ? dados.relatorio(usuario) : null,
-        ehEquipe(usuario.perfil) ? dados.listarEmpresas(usuario) : null,
+        equipe ? opcional(dados.panoramaEmpresas()) : null,
+        usuario.empresaId ? opcional(dados.diagnosticosPendentes()) : null,
+        usuario.empresaId ? opcional(dados.listarKaizens()) : null,
     ]);
-    const empresas = todasEmpresas?.slice(0, 6) ?? null;
+    const cultura = gestor ? await seJaPronto(culturaPromessa) : undefined;
 
     // "Continue de onde parou": um curso em andamento (o mais avançado primeiro).
     const emAndamento = cursos.filter((c) => c.progresso?.matriculado && !c.progresso.concluido)
         .sort((a, b) => b.progresso.feitas - a.progresso.feitas)[0] ?? null;
-    let proximaAula = null;
-    if (emAndamento?.progresso.proximaAulaId) {
-        const detalhe = await dados.obterCurso(usuario, emAndamento.id);
-        proximaAula = detalhe.modulos.flatMap((m) => m.aulas).find((a) => a.id === emAndamento.progresso.proximaAulaId) ?? null;
-    }
+    // A próxima aula já vem na lista de cursos (sem outra ida ao servidor).
+    const proximaAula = emAndamento?.progresso.proximaAulaId
+        ? { id: emAndamento.progresso.proximaAulaId, titulo: emAndamento.progresso.proximaAulaTitulo }
+        : null;
 
     const subtitulo = [t(`perfis.${usuario.perfil}`), empresa?.nome, formatarData(new Date().toISOString(), { weekday: 'long', day: 'numeric', month: 'long' })]
         .filter(Boolean).join(' · ');
 
     // Quem gere (gestor e equipe) vê primeiro a turma; o aluno vê primeiro o próprio aprendizado.
     const principal = gere ? [
+        equipe ? blocoCarteira(carteira) : '',
         blocoProgressoCursos(relatorio.porCurso),
-        blocoAtencao(relatorio.linhas, ehEquipe(usuario.perfil)),
-        empresas ? blocoEmpresas(empresas) : '',
+        blocoAtencao(relatorio.linhas, equipe),
         estuda ? blocoMeusCursos(cursos, t('gestao.seusCursos')) : '',
     ] : [
         blocoMeusCursos(cursos),
+        kaizens ? blocoKaizen(kaizens, usuario) : '',
         blocoAtividade(atividade),
     ];
     const lateral = [
+        gestor ? html`<div data-cultura-empresa>${cultura === undefined ? blocoCulturaCarregando() : blocoCulturaEmpresa(cultura)}</div>` : '',
+        gestor && kaizens ? blocoKaizen(kaizens, usuario) : '',
         gamificacao ? blocoGamificacao(gamificacao) : '',
         ranking ? blocoRanking(ranking) : '',
         gere ? blocoAtividade(atividade) : '',
@@ -310,6 +426,7 @@ export async function tela({ usuario, empresa }) {
                 <h1 class="titulo" tabindex="-1">${t('painel.ola', { nome: primeiroNome(usuario.nome) })}</h1>
                 <p class="subtitulo">${subtitulo}</p>
             </header>
+            ${blocoPesquisaPendente(pendentes)}
             ${blocoIndicadores(usuario, resumo)}
             ${gere ? blocoAcoes(usuario) : ''}
             ${estuda && !gere ? blocoContinuar(emAndamento, proximaAula, cursos.some((c) => c.progresso?.concluido)) : ''}
@@ -317,5 +434,9 @@ export async function tela({ usuario, empresa }) {
                 <div class="painel-coluna">${principal}</div>
                 <div class="painel-coluna painel-coluna--lateral">${lateral}</div>
             </div>`,
+        montar(raiz) {
+            const lugar = raiz.querySelector('[data-cultura-empresa]');
+            if (lugar && cultura === undefined) culturaPromessa.then((c) => { if (lugar.isConnected) desenharEm(lugar, blocoCulturaEmpresa(c)); });
+        },
     };
 }

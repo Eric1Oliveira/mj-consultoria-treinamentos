@@ -4,6 +4,7 @@ import * as dados from '../dados.js';
 import { podeEstudar } from '../regras.js';
 import { t, IDIOMAS, idiomaAtual, formatarData } from '../textos.js';
 import { html, icone, opcao, anunciar, mostrarErro, mudarPreferencias, preferenciaTema } from '../app.js';
+import { formularioSenha, ligarFormularioSenha } from './senha.js';
 
 export async function tela({ usuario, empresa, recarregar }) {
     const cursos = podeEstudar(usuario.perfil) ? await dados.listarCursos(usuario) : [];
@@ -33,6 +34,7 @@ export async function tela({ usuario, empresa, recarregar }) {
                         <dl class="ficha">
                             <div><dt>${t('comum.perfil')}</dt><dd>${t(`perfis.${usuario.perfil}`)}</dd></div>
                             ${empresa ? html`<div><dt>${t('comum.empresa')}</dt><dd>${empresa.nome}</dd></div>` : ''}
+                            ${usuario.area ? html`<div><dt>${t('pessoas.area')}</dt><dd>${usuario.area}</dd></div>` : ''}
                         </dl>
                         <h2 class="bloco-titulo">${t('conta.preferencias')}</h2>
                         <div class="grade-2">
@@ -63,13 +65,15 @@ export async function tela({ usuario, empresa, recarregar }) {
                                 <a class="botao botao--secundario botao--p" href="#/certificado/${c.progresso.certificadoId}">${t('cursos.verCertificado')}<span class="sr-only"> – ${c.titulo}</span></a>
                             </li>`)}</ul>` : html`<p class="vazio">${t('conta.semCertificados')}</p>`}
                     </section>` : ''}
-                    <section class="painel-bloco painel-bloco--sutil" aria-labelledby="conta-seguranca">
+                    <section class="painel-bloco" aria-labelledby="conta-seguranca">
                         <h2 id="conta-seguranca" class="bloco-titulo">${t('conta.seguranca')}</h2>
                         <p class="bloco-nota">${t('conta.segurancaTexto')}</p>
+                        ${formularioSenha('conta')}
                     </section>
                 </div>
             </div>`,
         montar(raiz) {
+            ligarFormularioSenha(raiz);
             const form = raiz.querySelector('[data-form="conta"]');
             form.addEventListener('submit', async (evento) => {
                 evento.preventDefault();

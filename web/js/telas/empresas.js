@@ -27,7 +27,7 @@ function listaEmpresas(empresas) {
 }
 
 async function telaLista(usuario) {
-    const empresas = await dados.listarEmpresas(usuario, filtro);
+    const empresas = await dados.listarEmpresas(usuario, { ...filtro, comLogo: true });
     return {
         titulo: t('empresas.titulo'),
         conteudo: html`
@@ -61,7 +61,7 @@ async function telaLista(usuario) {
             const atualizar = async () => {
                 filtro.busca = form.busca.value;
                 filtro.situacao = form.situacao.value;
-                desenharEm(raiz.querySelector('[data-lista]'), listaEmpresas(await dados.listarEmpresas(usuario, filtro)));
+                desenharEm(raiz.querySelector('[data-lista]'), listaEmpresas(await dados.listarEmpresas(usuario, { ...filtro, comLogo: true })));
             };
             form.addEventListener('input', atualizar);
             form.addEventListener('submit', (evento) => {

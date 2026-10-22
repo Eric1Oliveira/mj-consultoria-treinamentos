@@ -78,6 +78,17 @@ const ICONES = {
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
     sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+    trofeu: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7M10 17h4"/>',
+    ciclo: '<path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6"/><path d="M18 3v3.6h-3.6M6 21v-3.6h3.6"/>',
+    bussola: '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/>',
+    busca: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
+    lampada: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1.1 1.3 1.1 2.2h5c0-.9.5-1.7 1.1-2.2A6 6 0 0 0 12 3z"/>',
+    conversa: '<path d="M4 5h16v11H9l-5 4z"/>',
+    moeda: '<circle cx="12" cy="12" r="9"/><path d="M14.8 9.2c-.5-.8-1.5-1.2-2.8-1.2-1.7 0-2.8.8-2.8 2 0 2.8 5.6 1.4 5.6 4.1 0 1.2-1.2 2-2.8 2-1.4 0-2.4-.5-2.9-1.4M12 6v2M12 16v2"/>',
+    escudo: '<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/>',
+    subir: '<path d="m6 15 6-6 6 6"/>',
+    descer: '<path d="m6 9 6 6 6-6"/>',
+    lixo: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 };
 
 export function icone(nome, classe = 'icone') {
@@ -213,6 +224,14 @@ export function avatar(nome, cor) {
     return html`<span class="avatar" data-cor="${cor ?? ''}" aria-hidden="true">${iniciais(nome)}</span>`;
 }
 
+/** Cartão de indicador (KPI) dentro de <dl class="indicadores">. */
+export function indicador(rotulo, valor, destaque = false) {
+    return html`<div class="indicador ${destaque ? 'indicador--destaque' : ''}">
+        <dt class="indicador-rotulo">${rotulo}</dt>
+        <dd class="indicador-valor">${valor}</dd>
+    </div>`;
+}
+
 export function opcao(valor, rotulo, selecionado = false) {
     return html`<option value="${valor}" ${selecionado ? html`selected` : ''}>${rotulo}</option>`;
 }
@@ -252,21 +271,40 @@ const ROTAS = {
     solicitacoes: { icone: 'inbox', acao: 'ver-solicitacoes', carregar: () => import('./telas/solicitacoes.js') },
     cursos: { icone: 'book', acao: 'ver-cursos', carregar: () => import('./telas/cursos.js') },
     certificado: { menu: 'cursos', funcao: 'telaCertificado', carregar: () => import('./telas/cursos.js') },
+    cultura: { icone: 'bussola', acao: 'ver-cultura', carregar: () => import('./telas/cultura.js') },
+    kaizen: { icone: 'ciclo', acao: 'ver-kaizen', carregar: () => import('./telas/kaizen.js') },
+    ranking: { icone: 'trofeu', acao: 'ver-ranking', carregar: () => import('./telas/ranking.js') },
     relatorios: { icone: 'chart', acao: 'ver-relatorios', carregar: () => import('./telas/relatorios.js') },
     auditoria: { icone: 'list', acao: 'ver-auditoria', carregar: () => import('./telas/auditoria.js') },
     marca: { icone: 'palette', acao: 'personalizar-marca', soEmpresa: true, carregar: () => import('./telas/marca.js') },
     conta: { icone: 'user', carregar: () => import('./telas/conta.js') },
+    validar: { publica: true, carregar: () => import('./telas/validar.js') },
+    recuperar: { publica: true, carregar: () => import('./telas/senha.js') },
+    'nova-senha': { publica: true, funcao: 'telaNovaSenha', carregar: () => import('./telas/senha.js') },
 };
 
-const MENU = ['painel', 'empresas', 'pessoas', 'equipe', 'solicitacoes', 'cursos', 'relatorios', 'auditoria', 'marca', 'conta'];
+const MENU = ['painel', 'empresas', 'pessoas', 'equipe', 'solicitacoes', 'cursos', 'cultura', 'kaizen', 'ranking', 'relatorios', 'auditoria', 'marca', 'conta'];
 
-/** Atalhos da barra inferior do celular (os primeiros que o perfil pode ver). */
-const ATALHOS_CELULAR = ['painel', 'cursos', 'pessoas', 'empresas', 'relatorios', 'conta'];
+/** Atalhos da barra inferior do celular (os primeiros que o perfil pode ver): a equipe gere, quem é da empresa estuda. */
+const ATALHOS_CELULAR = {
+    equipe: ['painel', 'empresas', 'cultura', 'relatorios'],
+    empresa: ['painel', 'cursos', 'kaizen', 'ranking'],
+};
 
+/** Itens do menu que mostram um contador (o que espera uma ação). */
+const CONTADORES = { solicitacoes: 'solicitacoes', cultura: 'cultura', kaizen: 'kaizen' };
+
+/** "#/kaizen/novo?dimensao=x" → { nome: 'kaizen', parametros: ['novo'], consulta: URLSearchParams } */
 function lerRota() {
-    const bruto = window.location.hash.replace(/^#\/?/, '');
-    const [nome, ...parametros] = bruto.split('/').filter(Boolean);
-    return { nome: nome || 'painel', parametros };
+    const [caminho, busca = ''] = window.location.hash.replace(/^#\/?/, '').split('?');
+    const [nome, ...parametros] = caminho.split('/').filter(Boolean).map((p) => {
+        try {
+            return decodeURIComponent(p);
+        } catch {
+            return p;
+        }
+    });
+    return { nome: nome || 'painel', parametros, consulta: new URLSearchParams(busca) };
 }
 
 export function irPara(nome) {
@@ -339,6 +377,14 @@ export function aplicarEstilosDinamicos(raiz) {
     raiz.querySelectorAll('[data-progresso]').forEach((el) => {
         const valor = Math.max(0, Math.min(100, Number(el.dataset.progresso) || 0));
         el.style.setProperty('--progresso', `${valor}%`);
+    });
+    // Gráficos: data-pct-largura="40" → --largura: 40% (qualquer data-pct-*, sempre entre 0 e 100).
+    raiz.querySelectorAll('[class*="nota-barra"], .fav-seg, .halteres-ligacao, .halteres-ponto, [data-pct]').forEach((el) => {
+        for (const [chave, bruto] of Object.entries(el.dataset)) {
+            if (!chave.startsWith('pct') || chave === 'pct') continue;
+            const nome = chave.slice(3).replace(/^./, (c) => c.toLowerCase()).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+            el.style.setProperty(`--${nome}`, `${Math.max(0, Math.min(100, Number(bruto) || 0))}%`);
+        }
     });
 }
 
@@ -503,7 +549,7 @@ export function perguntar({ titulo, texto = '', confirmar, cancelar = t('comum.c
             const confirmado = dialogo.returnValue === 'confirmar';
             const valor = entrada ? entrada.value.trim() : true;
             dialogo.remove();
-            resolver(confirmado && valor !== '' ? valor : null);
+            resolver(confirmado && (valor !== '' || campo?.permitirVazio) ? valor : null);
         });
         dialogo.showModal();
         if (entrada) entrada.focus();
@@ -618,12 +664,16 @@ function montarShell(usuario, empresa, rotaAtual) {
     if (assinaturaLayout !== assinatura) {
         assinaturaLayout = assinatura;
         const itens = itensDoMenu(usuario);
-        const atalhos = ATALHOS_CELULAR.filter((nome) => itens.includes(nome)).slice(0, 4);
+        const atalhos = ATALHOS_CELULAR[ehEquipe(usuario.perfil) ? 'equipe' : 'empresa'].filter((nome) => itens.includes(nome)).slice(0, 4);
+        const contador = (nome) => (CONTADORES[nome] ? html`<span class="nav-contador" data-contador="${CONTADORES[nome]}" hidden></span>` : '');
         const navegacao = html`
+            <button type="button" class="nav-busca" data-acao="paleta" aria-keyshortcuts="Control+K Meta+K">
+                ${icone('busca', 'icone icone--p')}<span>${t('paleta.abrir')}</span><kbd>${/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'} K</kbd>
+            </button>
             <ul class="nav-lista" role="list">
                 ${itens.map((nome) => html`
                     <li><a class="nav-item" href="#/${nome}" data-rota="${nome}">
-                        ${icone(ROTAS[nome].icone)}<span class="nav-rotulo">${t(`nav.${nome}`)}</span>
+                        ${icone(ROTAS[nome].icone)}<span class="nav-rotulo">${t(`nav.${nome}`)}</span>${contador(nome)}
                     </a></li>`)}
             </ul>`;
         const rodape = html`
@@ -644,7 +694,10 @@ function montarShell(usuario, empresa, rotaAtual) {
             <div class="shell">
                 <header class="topo">
                     ${marcaTopo(marca)}
-                    <a class="topo-conta" href="#/conta" aria-label="${t('nav.conta')}">${avatar(usuario.nome, marca?.cor)}</a>
+                    <span class="topo-acoes">
+                        <button type="button" class="botao-icone" data-acao="paleta" aria-label="${t('paleta.abrir')}">${icone('busca')}</button>
+                        <a class="topo-conta" href="#/conta" aria-label="${t('nav.conta')}">${avatar(usuario.nome, marca?.cor)}</a>
+                    </span>
                 </header>
                 <div class="lateral-fundo" data-acao="fechar-menu" hidden></div>
                 <aside class="lateral" id="menu-lateral" aria-label="${t('shell.menu')}">
@@ -654,7 +707,7 @@ function montarShell(usuario, empresa, rotaAtual) {
                 </aside>
                 <main id="conteudo" class="principal" tabindex="-1"></main>
                 <nav class="barra-inferior" aria-label="${t('shell.atalhos')}">
-                    ${atalhos.map((nome) => html`<a class="barra-item" href="#/${nome}" data-rota="${nome}">${icone(ROTAS[nome].icone)}<span>${t(`nav.${nome}`)}</span></a>`)}
+                    ${atalhos.map((nome) => html`<a class="barra-item" href="#/${nome}" data-rota="${nome}">${icone(ROTAS[nome].icone)}<span>${t(`nav.${nome}`)}</span>${contador(nome)}</a>`)}
                     <button type="button" class="barra-item" data-acao="menu" aria-controls="menu-lateral" aria-expanded="false">${icone('grid')}<span>${t('shell.mais')}</span></button>
                 </nav>
             </div>`.texto;
@@ -666,7 +719,74 @@ function montarShell(usuario, empresa, rotaAtual) {
         else link.removeAttribute('aria-current');
     });
     fecharMenu();
+    atualizarContadores();
+    aquecerMenu(1200);
     return app.querySelector('#conteudo');
+}
+
+// ------------------------------------------------------- pré-carregamento --
+// Cada ida ao Supabase leva de 0,2 a 0,8 s. Para o menu responder na hora, as telas
+// são preparadas antes do clique: em segundo plano depois que a primeira tela abre (e de
+// novo depois de cada ação), e ao passar o mouse ou o dedo num item do menu. Preparar =
+// baixar o módulo e rodar a função da tela, que enche o cache de dados (dados.js).
+
+const preparadas = new Map(); // rota → quando foi preparada
+const PREPARO_VALE_MS = 120_000;
+
+async function prepararTela(nome) {
+    const rota = ROTAS[nome];
+    if (!rota || rota.publica || nome === lerRota().nome) return;
+    const ultima = preparadas.get(nome);
+    if (ultima && Date.now() - ultima < PREPARO_VALE_MS) return;
+    preparadas.set(nome, Date.now());
+    try {
+        const usuario = await dados.usuarioAtual();
+        if (!usuario || (rota.acao && !pode(usuario, rota.acao)) || (rota.soEmpresa && !usuario.empresaId)) return;
+        const empresa = usuario.empresaId ? await dados.obterEmpresa(usuario.empresaId) : null;
+        const modulo = await rota.carregar();
+        await modulo[rota.funcao ?? 'tela']({ usuario, empresa, parametros: [], consulta: new URLSearchParams(), recarregar: () => {} });
+    } catch {
+        preparadas.delete(nome); // preparar é opcional: o clique carrega normalmente
+    }
+}
+
+let aquecimento = null;
+
+/** Prepara as telas do menu em segundo plano, duas por vez, sem disputar com a tela atual. */
+function aquecerMenu(espera = 600) {
+    clearTimeout(aquecimento);
+    aquecimento = setTimeout(async () => {
+        const usuario = await dados.usuarioAtual();
+        if (!usuario) return;
+        const fila = itensDoMenu(usuario);
+        const trabalhar = async () => {
+            while (fila.length) await prepararTela(fila.shift());
+        };
+        await Promise.all([trabalhar(), trabalhar()]);
+    }, espera);
+}
+
+// Passar o mouse, focar ou tocar num item do menu já começa a preparar a tela.
+['pointerover', 'focusin', 'touchstart'].forEach((tipo) => {
+    document.addEventListener(tipo, (evento) => {
+        const link = evento.target.closest?.('a[data-rota]');
+        if (link) prepararTela(link.dataset.rota);
+    }, { passive: true });
+});
+
+/** Contadores do menu (pedidos a decidir, pesquisa a responder, kaizen a verificar). Não atrasam a tela. */
+async function atualizarContadores() {
+    let valores;
+    try {
+        valores = await dados.contadoresMenu();
+    } catch {
+        return;
+    }
+    document.querySelectorAll('[data-contador]').forEach((el) => {
+        const n = valores[el.dataset.contador] ?? 0;
+        el.hidden = !n;
+        el.innerHTML = html`<span aria-hidden="true">${n > 99 ? '99+' : n}</span><span class="sr-only">, ${t('shell.pendentes', { n })}</span>`.texto;
+    });
 }
 
 function abrirMenu(aberto) {
@@ -691,13 +811,16 @@ let primeiraTela = true;
 
 async function renderizar() {
     const minha = ++geracao;
-    const { nome, parametros } = lerRota();
+    const { nome, parametros, consulta } = lerRota();
     const rota = ROTAS[nome];
     const usuario = await dados.usuarioAtual();
 
     if (rota && !rota.publica && !usuario) return irPara('login');
     if (nome === 'login' && usuario) return irPara('painel');
 
+    // O código da tela baixa enquanto a empresa chega (em paralelo, não em fila).
+    const moduloPronto = rota?.carregar();
+    moduloPronto?.catch(() => {}); // o erro é tratado mais abaixo, onde é aguardado
     const empresa = usuario?.empresaId ? await dados.obterEmpresa(usuario.empresaId) : null;
     if (minha !== geracao) return;
 
@@ -715,8 +838,8 @@ async function renderizar() {
             resultado = telaMensagem(t('erros.semPermissaoTitulo'), t('erros.semPermissaoTexto'));
         } else {
             principal.setAttribute('aria-busy', 'true');
-            const modulo = await rota.carregar();
-            resultado = await modulo[rota.funcao ?? 'tela']({ usuario, empresa, parametros, recarregar: renderizar });
+            const modulo = await moduloPronto;
+            resultado = await modulo[rota.funcao ?? 'tela']({ usuario, empresa, parametros, consulta, recarregar: renderizar });
         }
     } catch (erro) {
         if (erro instanceof dados.ErroDados) {
@@ -744,7 +867,7 @@ async function renderizar() {
     void principal.offsetWidth; // reinicia a animação de entrada
     principal.classList.add('entrando');
     aplicarEstilosDinamicos(principal);
-    resultado.montar?.(tela, { usuario, empresa, parametros, recarregar: renderizar });
+    resultado.montar?.(tela, { usuario, empresa, parametros, consulta, recarregar: renderizar });
     document.title = `${resultado.titulo} · ${nomeDaMarca}`;
     // Sinal de "tela pronta" (qual tela e quantas vezes já desenhou): usado pelos testes automáticos.
     principal.dataset.tela = rota ? nome : 'nao-encontrada';
@@ -769,6 +892,135 @@ function telaMensagem(titulo, texto, comTentarDeNovo = false) {
                 <a class="botao botao--secundario" href="#/painel">${t('comum.voltarInicio')}</a>
             </div>`,
     };
+}
+
+// ------------------------------------------------------------------ dicas --
+// Uma dica flutuante para qualquer elemento com data-dica (gráficos, ícones).
+// Aparece ao passar o mouse ou ao focar; o valor sempre existe também em texto.
+
+let dica = null;
+
+function mostrarDica(alvo) {
+    if (!alvo.dataset.dica) return;
+    dica ??= Object.assign(document.createElement('div'), { className: 'dica', role: 'tooltip' });
+    if (!dica.isConnected) document.body.append(dica);
+    dica.textContent = alvo.dataset.dica;
+    dica.hidden = false;
+    const caixa = alvo.getBoundingClientRect();
+    const largura = dica.offsetWidth;
+    const esquerda = Math.max(8, Math.min(window.innerWidth - largura - 8, caixa.left + caixa.width / 2 - largura / 2));
+    const acima = caixa.top - dica.offsetHeight - 8;
+    dica.style.left = `${esquerda}px`;
+    dica.style.top = `${acima > 8 ? acima : caixa.bottom + 8}px`;
+}
+
+function esconderDica() {
+    if (dica) dica.hidden = true;
+}
+
+document.addEventListener('pointerover', (evento) => {
+    const alvo = evento.target.closest?.('[data-dica]');
+    if (alvo) mostrarDica(alvo);
+    else esconderDica();
+});
+document.addEventListener('focusin', (evento) => {
+    const alvo = evento.target.closest?.('[data-dica]');
+    if (alvo) mostrarDica(alvo);
+    else esconderDica();
+});
+window.addEventListener('scroll', esconderDica, { passive: true });
+
+// --------------------------------------------------------- busca rápida --
+// Ctrl/⌘ + K: ir direto para qualquer tela, curso, empresa ou kaizen.
+
+const semAcento = (texto) => String(texto).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+async function itensDaPaleta(usuario) {
+    const telas = itensDoMenu(usuario).map((nome) => ({ rotulo: t(`nav.${nome}`), grupo: t('paleta.telas'), href: `#/${nome}`, icone: ROTAS[nome].icone }));
+    const acoes = [
+        pode(usuario, 'gerir-cursos') && { rotulo: t('cursos.novo'), href: '#/cursos/novo', icone: 'plus' },
+        pode(usuario, 'gerir-empresas') && { rotulo: t('empresas.nova'), href: '#/empresas/nova', icone: 'plus' },
+        pode(usuario, 'gerir-diagnosticos') && { rotulo: t('cultura.novo'), href: '#/cultura/novo', icone: 'plus' },
+        pode(usuario, 'ver-kaizen') && { rotulo: t('kaizen.novo'), href: '#/kaizen/novo', icone: 'lampada' },
+    ].filter(Boolean).map((a) => ({ ...a, grupo: t('paleta.acoes') }));
+    const [cursos, empresas, kaizens] = await Promise.all([
+        dados.listarCursos(usuario).catch(() => []),
+        pode(usuario, 'ver-empresas') ? dados.listarEmpresas(usuario).catch(() => []) : [],
+        pode(usuario, 'ver-kaizen') ? dados.listarKaizens().catch(() => []) : [],
+    ]);
+    return [
+        ...acoes,
+        ...telas,
+        ...cursos.map((c) => ({ rotulo: c.titulo, grupo: t('paleta.cursos'), href: `#/cursos/${c.id}`, icone: 'book' })),
+        ...empresas.map((e) => ({ rotulo: e.nome, grupo: t('paleta.empresas'), href: `#/empresas/${e.id}`, icone: 'building' })),
+        ...kaizens.map((k) => ({ rotulo: `KZ-${String(k.numero).padStart(3, '0')} · ${k.titulo}`, grupo: t('paleta.kaizens'), href: `#/kaizen/${k.id}`, icone: 'ciclo' })),
+    ];
+}
+
+async function abrirPaleta() {
+    const usuario = await dados.usuarioAtual();
+    if (!usuario || document.querySelector('.paleta')) return;
+    fecharMenu();
+    const dialogo = document.createElement('dialog');
+    dialogo.className = 'dialogo paleta';
+    dialogo.setAttribute('aria-label', t('paleta.abrir'));
+    dialogo.innerHTML = html`
+        <div class="paleta-campo">
+            ${icone('busca')}
+            <input type="search" role="combobox" aria-expanded="true" aria-controls="paleta-lista" aria-autocomplete="list"
+                   placeholder="${t('paleta.placeholder')}" aria-label="${t('paleta.abrir')}" autocomplete="off" spellcheck="false">
+            <kbd>Esc</kbd>
+        </div>
+        <ul class="paleta-lista" id="paleta-lista" role="listbox" aria-label="${t('paleta.resultados')}"></ul>`.texto;
+    document.body.append(dialogo);
+    dialogo.addEventListener('close', () => dialogo.remove());
+    dialogo.addEventListener('click', (evento) => {
+        if (evento.target === dialogo) dialogo.close(); // clique fora da caixa
+    });
+    dialogo.showModal();
+
+    const campo = dialogo.querySelector('input');
+    const lista = dialogo.querySelector('.paleta-lista');
+    let itens = [];
+    let visiveis = [];
+    let ativo = 0;
+
+    const desenhar = () => {
+        const termos = semAcento(campo.value).split(/\s+/).filter(Boolean);
+        visiveis = itens.filter((i) => termos.every((termo) => semAcento(`${i.rotulo} ${i.grupo}`).includes(termo))).slice(0, 40);
+        ativo = Math.min(ativo, Math.max(0, visiveis.length - 1));
+        lista.innerHTML = (visiveis.length ? html`${visiveis.map((item, i) => html`
+            <li id="paleta-${i}" role="option" class="paleta-item" aria-selected="${i === ativo ? 'true' : 'false'}" data-indice="${i}">
+                ${icone(item.icone ?? 'arrow', 'icone icone--p')}<span class="paleta-rotulo">${item.rotulo}</span><span class="paleta-grupo">${item.grupo}</span>
+            </li>`)}` : html`<li class="paleta-vazio" role="presentation">${itens.length ? t('paleta.nada') : t('comum.carregando')}</li>`).texto;
+        campo.setAttribute('aria-activedescendant', visiveis.length ? `paleta-${ativo}` : '');
+        lista.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+    };
+    const ir = (item) => {
+        if (!item) return;
+        dialogo.close();
+        window.location.hash = item.href;
+    };
+
+    campo.addEventListener('input', () => {
+        ativo = 0;
+        desenhar();
+    });
+    campo.addEventListener('keydown', (evento) => {
+        if (evento.key === 'ArrowDown' || evento.key === 'ArrowUp') {
+            evento.preventDefault();
+            if (!visiveis.length) return;
+            ativo = (ativo + (evento.key === 'ArrowDown' ? 1 : -1) + visiveis.length) % visiveis.length;
+            desenhar();
+        } else if (evento.key === 'Enter') {
+            evento.preventDefault();
+            ir(visiveis[ativo]);
+        }
+    });
+    lista.addEventListener('click', (evento) => ir(visiveis[Number(evento.target.closest('[data-indice]')?.dataset.indice)]));
+    desenhar();
+    itens = await itensDaPaleta(usuario);
+    if (dialogo.open) desenhar();
 }
 
 // --------------------------------------------------------------- eventos --
@@ -810,7 +1062,11 @@ document.addEventListener('click', async (evento) => {
         case 'fechar-menu':
             fecharMenu();
             break;
+        case 'paleta':
+            abrirPaleta();
+            break;
         case 'sair':
+            preparadas.clear();
             await dados.sair();
             anunciar(t('shell.saiu'));
             irPara('login');
@@ -824,6 +1080,12 @@ document.addEventListener('click', async (evento) => {
 });
 
 document.addEventListener('keydown', (evento) => {
+    if ((evento.ctrlKey || evento.metaKey) && evento.key.toLowerCase() === 'k') {
+        evento.preventDefault();
+        abrirPaleta();
+        return;
+    }
+    if (evento.key === 'Escape') esconderDica();
     if (evento.key === 'Escape' && document.querySelector('#menu-lateral[data-aberto]')) {
         fecharMenu();
         document.querySelector('[data-acao="menu"]')?.focus();
@@ -837,7 +1099,18 @@ function atualizarTextosFixos() {
 // --------------------------------------------------------------- início --
 
 async function iniciar() {
+    // Volta do e-mail de recuperação de senha: a sessão vem no endereço e sai dele na hora.
+    const retorno = dados.retornoDoAuth(window.location.hash);
+    if (retorno) {
+        const destino = retorno.erro ? `#/recuperar?erro=${encodeURIComponent(retorno.erro)}` : retorno.tipo === 'recovery' ? '#/nova-senha' : '#/painel';
+        history.replaceState(null, '', `${window.location.pathname}${window.location.search}${destino}`);
+    }
     await dados.iniciar();
+    // Depois de uma ação o cache é limpo; as telas do menu voltam a ser preparadas por trás.
+    dados.depoisDeEscrever(() => {
+        preparadas.clear();
+        aquecerMenu(1500);
+    });
     preferencias = await dados.lerPreferencias();
     const usuario = await dados.usuarioAtual();
     const idioma = [preferencias.idioma, usuario?.idioma].find(idiomaValido) ?? IDIOMA_PADRAO;

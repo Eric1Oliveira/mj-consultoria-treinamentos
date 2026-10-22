@@ -47,8 +47,10 @@ export async function tela() {
                         </div>
                         <p id="login-erro" class="campo-erro" role="alert" hidden></p>
                         <button type="submit" class="botao botao--primario botao--largo">${t('login.entrar')}</button>
+                        <p class="login-links"><a href="#/recuperar">${t('login.esqueci')}</a></p>
                     </form>
                 </section>
+                <p class="login-rodape">${icone('escudo', 'icone icone--p')}<a href="#/validar">${t('login.validarCertificado')}</a></p>
             </div>`,
 
         montar(raiz) {
