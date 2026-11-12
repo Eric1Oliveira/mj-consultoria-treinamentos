@@ -3582,9 +3582,17 @@ button {
 /* Logotipo da empresa contratante no certificado. */
 .certificado-logo {
     display: block;
+    width: auto;
+    height: auto;
     max-width: 220px;
     max-height: 72px;
     object-fit: contain;
+}
+
+/* O logo da MJ é empilhado (emblema sobre o nome): precisa de mais altura para o nome ficar legível. */
+.certificado-logo--mj {
+    max-width: 170px;
+    max-height: 128px;
 }
 
 .certificado-rotulo {

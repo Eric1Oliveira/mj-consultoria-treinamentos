@@ -772,12 +772,11 @@ export async function tela({ usuario, parametros, recarregar }) {
 
 /**
  * Logotipo do certificado: o da empresa contratante (ou o nome dela, sem logotipo cadastrado);
- * nos cursos marcados no editor, o da MJ Alimentos Seguros.
- * Para usar a arte oficial da MJ, troque o selo de texto por <img src="img/mj-alimentos-seguros.png">.
+ * nos cursos marcados no editor, o da MJ Alimentos Seguros (web/img/mj-alimentos-seguros.png).
  */
 function marcaCertificado(c) {
     if (c.marca === 'mj') {
-        return html`<p class="certificado-marca"><span class="logo-selo" aria-hidden="true">MJ</span> ${t('certificado.marcaMj')}</p>`;
+        return html`<p class="certificado-marca certificado-marca--logo"><img class="certificado-logo certificado-logo--mj" src="img/mj-alimentos-seguros.png" width="560" height="421" alt="${t('certificado.marcaMj')}"></p>`;
     }
     if (c.logo) {
         return html`<p class="certificado-marca certificado-marca--logo"><img class="certificado-logo" src="${c.logo}" alt="${c.empresa}"></p>`;

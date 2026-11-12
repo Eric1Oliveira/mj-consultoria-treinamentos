@@ -38,14 +38,19 @@
 }
 
 :root {
-    --aco: #eef2f3;
-    --aco-2: #e1e8ea;
-    --tinta: #10202a;
-    --tinta-suave: #4d5d66;
-    --petroleo: #0f4c5c;
-    --petroleo-escuro: #0a3540;
+    /* Cores do logo da MJ Alimentos Seguros. --oliva-marca (#6e803d) só em títulos grandes:
+       em texto pequeno sobre branco ele fica abaixo de 4,5:1; botões e links usam --oliva. */
+    --fundo: #f3f5ec;
+    --fundo-2: #e6eacf;
+    --tinta: #1c2412;
+    --tinta-suave: #4e5743;
+    --oliva-marca: #6e803d;
+    --oliva: #55652b;
+    --oliva-escuro: #3d4a1d;
+    --salvia: #bac391;
+    --salvia-clara: #dadfbd;
     --etiqueta: #e8b23a;
-    --linha: #c8d1d6;
+    --linha: #d3d9bf;
     --branco: #ffffff;
     --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
     --texto: 'Instrument Sans', 'Segoe UI', system-ui, sans-serif;
@@ -60,7 +65,7 @@
 
 body {
     margin: 0;
-    background: var(--aco);
+    background: var(--fundo);
     color: var(--tinta);
     font-family: var(--texto);
     font-size: 1.0625rem;
@@ -115,7 +120,7 @@ a {
 
 .topo {
     border-bottom: 1px solid var(--linha);
-    background: var(--aco);
+    background: var(--branco);
 }
 
 .topo-linha {
@@ -123,34 +128,25 @@ a {
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    min-height: 4.25rem;
+    min-height: 4.75rem;
 }
 
 .marca {
     display: inline-flex;
     align-items: center;
-    gap: 0.6rem;
     text-decoration: none;
-    font-family: var(--display);
-    font-weight: 700;
 }
 
-.marca-selo {
-    display: grid;
-    place-items: center;
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 9px;
-    background: var(--petroleo);
-    color: var(--branco);
-    font-size: 0.875rem;
-    letter-spacing: 0.02em;
+.marca-logo {
+    display: block;
+    width: auto;
+    height: 3rem;
 }
 
 .topo-entrar {
     font-weight: 600;
     font-size: 0.9375rem;
-    color: var(--petroleo);
+    color: var(--oliva);
     text-underline-offset: 4px;
 }
 
@@ -169,7 +165,7 @@ a {
 
 .sobretitulo {
     margin-bottom: 1rem;
-    color: var(--petroleo);
+    color: var(--oliva);
     font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -188,7 +184,7 @@ a {
 .manchete em {
     display: block;
     font-style: normal;
-    color: var(--petroleo);
+    color: var(--oliva-marca);
 }
 
 .abertura-apoio {
@@ -227,21 +223,21 @@ a {
 }
 
 .botao--primario {
-    background: var(--petroleo);
+    background: var(--oliva);
     color: var(--branco);
 }
 
 .botao--primario:hover {
-    background: var(--petroleo-escuro);
+    background: var(--oliva-escuro);
 }
 
 .botao--linha {
-    border: 1.5px solid var(--petroleo);
-    color: var(--petroleo);
+    border: 1.5px solid var(--oliva);
+    color: var(--oliva);
 }
 
 .botao--linha:hover {
-    background: var(--aco-2);
+    background: var(--fundo-2);
 }
 
 .botao--etiqueta {
@@ -273,17 +269,17 @@ a {
     justify-content: space-between;
     padding: 0.7rem 0.5rem;
     border-radius: 10px 10px 4px 4px;
-    background: var(--aco-2);
+    background: var(--fundo-2);
     color: var(--tinta);
     transform-origin: bottom;
     animation: subir 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
 }
 
-.degrau--1 { height: 22%; animation-delay: 0.05s; }
-.degrau--2 { height: 40%; animation-delay: 0.12s; background: #cfdcdf; }
-.degrau--3 { height: 58%; animation-delay: 0.19s; background: #8fb1b9; }
-.degrau--4 { height: 78%; animation-delay: 0.26s; background: #2f6f7e; color: var(--branco); }
-.degrau--5 { height: 100%; animation-delay: 0.33s; background: var(--petroleo); color: var(--branco); }
+.degrau--1 { height: 22%; animation-delay: 0.05s; background: var(--fundo-2); }
+.degrau--2 { height: 40%; animation-delay: 0.12s; background: var(--salvia-clara); }
+.degrau--3 { height: 58%; animation-delay: 0.19s; background: var(--salvia); }
+.degrau--4 { height: 78%; animation-delay: 0.26s; background: #5f7033; color: var(--branco); }
+.degrau--5 { height: 100%; animation-delay: 0.33s; background: var(--oliva-escuro); color: var(--branco); }
 
 /* O topo da escada leva a etiqueta âmbar, como o selo de lote liberado. */
 .degrau--5::before {
@@ -361,9 +357,9 @@ a {
     display: inline-block;
     margin-bottom: 0.75rem;
     padding: 0.1rem 0.5rem;
-    border: 1.5px solid var(--petroleo);
+    border: 1.5px solid var(--oliva);
     border-radius: 4px;
-    color: var(--petroleo);
+    color: var(--oliva);
     font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: 0.05em;
@@ -405,7 +401,7 @@ a {
     height: 2.5rem;
     margin-bottom: 1rem;
     border-radius: 50%;
-    background: var(--petroleo);
+    background: var(--oliva);
     color: var(--branco);
     font-family: var(--display);
     font-weight: 700;
@@ -425,7 +421,7 @@ a {
     gap: 1.5rem 3rem;
     padding: clamp(1.75rem, 5vw, 3rem);
     border-radius: var(--raio);
-    background: var(--petroleo);
+    background: var(--oliva-escuro);
     color: var(--branco);
 }
 
@@ -443,7 +439,7 @@ a {
 }
 
 .chamada-caixa p {
-    color: #d5e4e8;
+    color: #e3e8d2;
 }
 
 .chamada-acoes {
@@ -514,6 +510,10 @@ a {
 
     .topo-entrar {
         font-size: 0.875rem;
+    }
+
+    .marca-logo {
+        height: 2.4rem;
     }
 }
 
