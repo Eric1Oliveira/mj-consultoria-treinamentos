@@ -8,7 +8,8 @@ import { blocoConvites, ligarConvites, listaPessoas, ligarPessoas } from './pess
 
 export async function tela({ usuario, recarregar }) {
     const [equipe, convites] = await Promise.all([dados.listarEquipe(usuario), dados.listarConvites(usuario, null)]);
-    const perfis = ['admin', 'consultant'].filter((p) => podeConvidar(usuario, p, null));
+    // O perfil de consultora saiu da plataforma: a equipe convida só administradores.
+    const perfis = ['admin'].filter((p) => podeConvidar(usuario, p, null));
 
     return {
         titulo: t('equipe.titulo'),

@@ -450,7 +450,7 @@ export function celebrar({ titulo, texto = '', pontos = 0, acao = null }) {
 
 // ------------------------------------------------- erros de formulário --
 
-const MENSAGENS_ERRO = { proibido: 'erros.proibido', 'nao-encontrado': 'erros.naoEncontrado', inativo: 'erros.inativo', credenciais: 'login.erro' };
+const MENSAGENS_ERRO = { proibido: 'erros.proibido', 'nao-encontrado': 'erros.naoEncontrado', inativo: 'erros.inativo', credenciais: 'login.erro', 'limite-plano': 'erros.limitePlano' };
 
 export function limparErros(form) {
     form.querySelectorAll('[data-erro-campo]').forEach((el) => el.remove());
@@ -477,7 +477,7 @@ export function mostrarErro(erro, form = null) {
         return;
     }
     if (erro.codigo !== 'validacao') {
-        anunciar(t(MENSAGENS_ERRO[erro.codigo] ?? 'comum.erroGenerico'), 'erro');
+        anunciar(t(MENSAGENS_ERRO[erro.codigo] ?? 'comum.erroGenerico', erro.params), 'erro');
         return;
     }
     const mensagens = Object.entries(erro.campos).map(([campo, chave]) => [campo, t(`erros.campos.${chave}`, erro.params)]);

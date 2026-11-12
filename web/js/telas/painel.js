@@ -116,9 +116,11 @@ function blocoGamificacao(g) {
         <dl class="mini-indicadores">
             <div><dt>${icone('flame', 'icone icone--p')}${t('gamificacao.sequencia')}</dt><dd>${dias}</dd></div>
             <div><dt>${icone('target', 'icone icone--p')}${t('gamificacao.desafio')}</dt>
-                <dd>${g.desafio.cumprido ? t('gamificacao.desafioCumprido') : t('gamificacao.desafioProgresso', { feito: g.desafio.feito, meta: g.desafio.meta })}</dd></div>
+                <dd>${!g.desafio ? t('comum.semValor') : g.desafio.cumprido ? t('gamificacao.desafioCumprido') : t('gamificacao.desafioProgresso', { feito: g.desafio.feito, meta: g.desafio.meta })}</dd></div>
         </dl>
-        <p class="bloco-nota">${t('gamificacao.desafioTexto', { meta: g.desafio.meta, pontos: PONTOS.desafio })}</p>
+        <p class="bloco-nota">${g.desafio
+            ? html`${t('gamificacao.desafioTexto', { pontos: PONTOS.desafio })} <a href="#/cursos/${g.desafio.curso.id}">${g.desafio.curso.titulo}</a>`
+            : t('gamificacao.desafioSem')}</p>
 
         <h3 class="subbloco-titulo">${t('gamificacao.conquistas')}</h3>
         <ul class="conquistas" role="list">
@@ -190,6 +192,17 @@ function blocoCulturaEmpresa(cultura) {
         </section>`;
     }
     const { d, r } = cultura;
+    if (!r) {
+        // Já há diagnóstico, mas o resultado ainda não foi avaliado e liberado pelo administrador.
+        return html`<section class="painel-bloco" aria-labelledby="painel-cultura">
+            <div class="bloco-cabecalho bloco-cabecalho--linha">
+                <h2 id="painel-cultura" class="bloco-titulo">${t('painel.culturaTitulo')}</h2>
+                <a href="#/cultura">${t('cultura.titulo')}</a>
+            </div>
+            <p class="bloco-nota">${d.titulo}</p>
+            <p class="nota">${icone('clock', 'icone icone--p')}${d.aberto ? t('cultura.adesao', { n: d.respondentes, total: d.elegiveis }) : t('cultura.devolutivaDepois')}</p>
+        </section>`;
+    }
     return html`<section class="painel-bloco" aria-labelledby="painel-cultura">
         <div class="bloco-cabecalho bloco-cabecalho--linha">
             <h2 id="painel-cultura" class="bloco-titulo">${t('painel.culturaTitulo')}</h2>
@@ -276,8 +289,9 @@ async function seJaPronto(promessa, ms = 40) {
 
 async function culturaDaEmpresa() {
     const lista = await dados.listarDiagnosticos();
-    const d = lista.find((x) => x.respondentes > 0) ?? lista[0];
-    if (!d) return null;
+    // O gestor só vê o resultado que o administrador já avaliou e liberou.
+    const d = lista.find((x) => x.respondentes > 0 && x.liberado);
+    if (!d) return lista[0] ? { d: lista[0], r: null } : null;
     return { d, r: await dados.resultadoDiagnostico(d.id) };
 }
 

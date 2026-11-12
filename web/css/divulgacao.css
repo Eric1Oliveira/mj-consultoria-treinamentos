@@ -1,0 +1,528 @@
+/* Página de divulgação (divulgacao.html). Mesmas fontes e a cor da marca da plataforma.
+   Paleta: aço inox (fundo frio), petróleo (marca), âmbar de etiqueta de inspeção (destaque). */
+
+@font-face {
+    font-family: 'Bricolage Grotesque';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url('../fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Bricolage Grotesque';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 200 800;
+    src: url('../fonts/bricolage-grotesque-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Instrument Sans';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url('../fonts/instrument-sans-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Instrument Sans';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400 700;
+    src: url('../fonts/instrument-sans-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+    --aco: #eef2f3;
+    --aco-2: #e1e8ea;
+    --tinta: #10202a;
+    --tinta-suave: #4d5d66;
+    --petroleo: #0f4c5c;
+    --petroleo-escuro: #0a3540;
+    --etiqueta: #e8b23a;
+    --linha: #c8d1d6;
+    --branco: #ffffff;
+    --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
+    --texto: 'Instrument Sans', 'Segoe UI', system-ui, sans-serif;
+    --raio: 14px;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--aco);
+    color: var(--tinta);
+    font-family: var(--texto);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p,
+ol {
+    margin: 0;
+}
+
+ol {
+    padding: 0;
+    list-style: none;
+}
+
+a {
+    color: inherit;
+}
+
+:focus-visible {
+    outline: 3px solid var(--etiqueta);
+    outline-offset: 3px;
+    border-radius: 4px;
+}
+
+.largura {
+    width: min(1120px, 100% - 2rem);
+    margin-inline: auto;
+}
+
+.pular {
+    position: absolute;
+    left: 1rem;
+    top: -4rem;
+    padding: 0.6rem 1rem;
+    background: var(--tinta);
+    color: var(--branco);
+    border-radius: 8px;
+    z-index: 10;
+}
+
+.pular:focus {
+    top: 1rem;
+}
+
+/* ------------------------------------------------------------------ topo -- */
+
+.topo {
+    border-bottom: 1px solid var(--linha);
+    background: var(--aco);
+}
+
+.topo-linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 4.25rem;
+}
+
+.marca {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    text-decoration: none;
+    font-family: var(--display);
+    font-weight: 700;
+}
+
+.marca-selo {
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 9px;
+    background: var(--petroleo);
+    color: var(--branco);
+    font-size: 0.875rem;
+    letter-spacing: 0.02em;
+}
+
+.topo-entrar {
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--petroleo);
+    text-underline-offset: 4px;
+}
+
+/* -------------------------------------------------------------- abertura -- */
+
+.abertura {
+    padding-block: clamp(3rem, 8vw, 6rem);
+}
+
+.abertura-grade {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: clamp(2rem, 6vw, 5rem);
+    align-items: end;
+}
+
+.sobretitulo {
+    margin-bottom: 1rem;
+    color: var(--petroleo);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.manchete {
+    font-family: var(--display);
+    font-size: clamp(2.4rem, 5.4vw, 4.25rem);
+    font-weight: 750;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+    font-variation-settings: 'wdth' 85;
+}
+
+.manchete em {
+    display: block;
+    font-style: normal;
+    color: var(--petroleo);
+}
+
+.abertura-apoio {
+    max-width: 52ch;
+    margin-top: 1.5rem;
+    color: var(--tinta-suave);
+    font-size: 1.125rem;
+}
+
+.abertura-acoes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+}
+
+.abertura-normas {
+    margin-top: 1.75rem;
+    color: var(--tinta-suave);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.botao {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    padding: 0.7rem 1.35rem;
+    border-radius: 999px;
+    font-weight: 650;
+    font-size: 1rem;
+    text-decoration: none;
+    transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.botao--primario {
+    background: var(--petroleo);
+    color: var(--branco);
+}
+
+.botao--primario:hover {
+    background: var(--petroleo-escuro);
+}
+
+.botao--linha {
+    border: 1.5px solid var(--petroleo);
+    color: var(--petroleo);
+}
+
+.botao--linha:hover {
+    background: var(--aco-2);
+}
+
+.botao--etiqueta {
+    background: var(--etiqueta);
+    color: var(--tinta);
+}
+
+.botao--etiqueta:hover {
+    background: #f2c35a;
+}
+
+/* Assinatura: a escada de maturidade, os 5 níveis reais do diagnóstico. */
+.escada {
+    margin: 0;
+}
+
+.escada-degraus {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: end;
+    gap: 6px;
+    height: clamp(260px, 34vw, 380px);
+}
+
+.degrau {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.7rem 0.5rem;
+    border-radius: 10px 10px 4px 4px;
+    background: var(--aco-2);
+    color: var(--tinta);
+    transform-origin: bottom;
+    animation: subir 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+.degrau--1 { height: 22%; animation-delay: 0.05s; }
+.degrau--2 { height: 40%; animation-delay: 0.12s; background: #cfdcdf; }
+.degrau--3 { height: 58%; animation-delay: 0.19s; background: #8fb1b9; }
+.degrau--4 { height: 78%; animation-delay: 0.26s; background: #2f6f7e; color: var(--branco); }
+.degrau--5 { height: 100%; animation-delay: 0.33s; background: var(--petroleo); color: var(--branco); }
+
+/* O topo da escada leva a etiqueta âmbar, como o selo de lote liberado. */
+.degrau--5::before {
+    content: 'Meta';
+    position: absolute;
+    top: -0.85rem;
+    left: 0.6rem;
+    padding: 0.1rem 0.55rem;
+    border-radius: 4px;
+    background: var(--etiqueta);
+    color: var(--tinta);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.degrau-nome {
+    font-family: var(--display);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1.15;
+    hyphens: manual; /* quebras marcadas com &shy; no HTML */
+}
+
+.degrau-faixa {
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+}
+
+.escada-legenda {
+    margin-top: 1rem;
+    color: var(--tinta-suave);
+    font-size: 0.875rem;
+}
+
+/* Só cresce a partir da base: sem começar invisível (impressão e prévias mostram a escada inteira). */
+@keyframes subir {
+    from {
+        transform: scaleY(0.6);
+    }
+}
+
+/* -------------------------------------------------------------- recursos -- */
+
+.recursos {
+    padding-block: clamp(3rem, 7vw, 5rem);
+    background: var(--branco);
+    border-block: 1px solid var(--linha);
+}
+
+.secao-titulo {
+    margin-bottom: 2rem;
+    font-family: var(--display);
+    font-size: clamp(1.75rem, 3.4vw, 2.5rem);
+    font-weight: 720;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+}
+
+.recursos-grade {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2.5rem 2rem;
+}
+
+.recurso {
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--tinta);
+}
+
+.etiqueta {
+    display: inline-block;
+    margin-bottom: 0.75rem;
+    padding: 0.1rem 0.5rem;
+    border: 1.5px solid var(--petroleo);
+    border-radius: 4px;
+    color: var(--petroleo);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.recurso h3,
+.passo h3 {
+    margin-bottom: 0.5rem;
+    font-family: var(--display);
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+}
+
+.recurso p:last-child,
+.passo p {
+    color: var(--tinta-suave);
+    font-size: 1rem;
+}
+
+/* -------------------------------------------------------------- processo -- */
+
+.processo {
+    padding-block: clamp(3rem, 7vw, 5rem);
+}
+
+.passos {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.5rem;
+}
+
+.passo-n {
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-bottom: 1rem;
+    border-radius: 50%;
+    background: var(--petroleo);
+    color: var(--branco);
+    font-family: var(--display);
+    font-weight: 700;
+}
+
+/* --------------------------------------------------------------- chamada -- */
+
+.chamada {
+    padding-bottom: clamp(3rem, 7vw, 5rem);
+}
+
+.chamada-caixa {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem 3rem;
+    padding: clamp(1.75rem, 5vw, 3rem);
+    border-radius: var(--raio);
+    background: var(--petroleo);
+    color: var(--branco);
+}
+
+.chamada-caixa > div:first-child {
+    max-width: 46ch;
+}
+
+.chamada-titulo {
+    margin-bottom: 0.5rem;
+    font-family: var(--display);
+    font-size: clamp(1.6rem, 3.2vw, 2.25rem);
+    font-weight: 720;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+}
+
+.chamada-caixa p {
+    color: #d5e4e8;
+}
+
+.chamada-acoes {
+    display: grid;
+    justify-items: start;
+    gap: 0.5rem;
+}
+
+.chamada-telefone {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- rodapé -- */
+
+.rodape {
+    border-top: 1px solid var(--linha);
+    padding-block: 1.5rem;
+    color: var(--tinta-suave);
+    font-size: 0.875rem;
+}
+
+.rodape-linha {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1.5rem;
+}
+
+.rodape a {
+    text-underline-offset: 3px;
+}
+
+/* ------------------------------------------------------------- responsivo -- */
+
+@media (max-width: 900px) {
+    .abertura-grade {
+        grid-template-columns: 1fr;
+    }
+
+    .recursos-grade {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .passos {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 560px) {
+    .recursos-grade,
+    .passos {
+        grid-template-columns: 1fr;
+    }
+
+    .escada-degraus {
+        height: 240px;
+        gap: 4px;
+    }
+
+    .degrau {
+        padding: 0.5rem 0.35rem;
+    }
+
+    .degrau-nome {
+        font-size: 0.6875rem;
+    }
+
+    .topo-entrar {
+        font-size: 0.875rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .degrau {
+        animation: none;
+    }
+
+    .botao {
+        transition: none;
+    }
+}

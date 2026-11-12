@@ -46,6 +46,7 @@ function cartao(usuario, c, nomesEmpresas) {
         </a>
         <div class="curso-cartao-corpo">
         <p class="curso-meta curso-meta--topo">${t('cursos.resumo', { modulos: c.modulos, aulas: c.aulas, horas: c.cargaHoraria })}</p>
+        ${c.dmqsa ? html`<p class="selo selo--marca curso-selo-dmqsa">${icone('target', 'icone icone--p')}${t('cursos.seloDmqsa')}</p>` : ''}
         <h2 class="curso-titulo">${c.titulo}</h2>
         <p class="curso-descricao">${c.descricao}</p>
         ${!c.ativo || p?.concluido ? html`<p class="sr-only">${[!c.ativo ? t('cursos.inativo') : '', p?.concluido ? t('painel.concluido') : ''].filter(Boolean).join(' · ')}</p>` : ''}
@@ -610,11 +611,12 @@ async function editor(usuario, id) {
     const estado = existente ? {
         id: existente.id, titulo: existente.titulo, descricao: existente.descricao, cargaHoraria: existente.cargaHoraria,
         notaMinima: existente.notaMinima, tentativas: existente.tentativas, ativo: existente.ativo, avancoAutomatico: existente.avancoAutomatico,
+        certificadoMarca: existente.certificadoMarca ?? 'empresa', dmqsa: Boolean(existente.dmqsa),
         empresas: [...existente.empresas],
         modulos: existente.modulos.map((m) => ({ id: m.id, titulo: m.titulo, aulas: m.aulas.map((a) => ({ ...a, video: a.videoId ?? '' })) })),
         avaliacao: { questoes: existente.avaliacao.questoes.map((q) => ({ ...q, alternativas: [...q.alternativas] })) },
     } : {
-        titulo: '', descricao: '', cargaHoraria: 1, notaMinima: 70, tentativas: 3, ativo: false, avancoAutomatico: true,
+        titulo: '', descricao: '', cargaHoraria: 1, notaMinima: 70, tentativas: 3, ativo: false, avancoAutomatico: true, certificadoMarca: 'empresa', dmqsa: false,
         empresas: [], modulos: [{ titulo: '', aulas: [novaAula()] }], avaliacao: { questoes: [] },
     };
     const titulo = existente ? t('editor.editar') : t('editor.novo');
@@ -645,6 +647,14 @@ async function editor(usuario, id) {
                     </div>
                     <label class="campo-check"><input type="checkbox" data-campo="ativo" ${estado.ativo ? html`checked` : ''}><span>${t('editor.ativo')}</span></label>
                     <label class="campo-check"><input type="checkbox" data-campo="avancoAutomatico" ${estado.avancoAutomatico ? html`checked` : ''}><span>${t('editor.avancoAutomatico')}</span></label>
+                    <label class="campo-check"><input type="checkbox" data-campo="dmqsa" ${estado.dmqsa ? html`checked` : ''}><span>${t('editor.dmqsa')}</span></label>
+                    <div class="campo">
+                        <label for="ed-certificado-marca">${t('editor.certificadoMarca')}</label>
+                        <select id="ed-certificado-marca" data-campo="certificadoMarca" aria-describedby="ed-certificado-marca-dica">
+                            ${['empresa', 'mj'].map((m) => html`<option value="${m}" ${m === estado.certificadoMarca ? html`selected` : ''}>${t(`editor.marcas.${m}`)}</option>`)}
+                        </select>
+                        <p id="ed-certificado-marca-dica" class="campo-dica">${t('editor.certificadoMarcaDica')}</p>
+                    </div>
                     <fieldset class="grupo-checks">
                         <legend>${t('editor.empresas')}</legend>
                         ${empresas.map((e) => html`<label class="campo-check"><input type="checkbox" data-empresa="${e.id}" ${estado.empresas.includes(e.id) ? html`checked` : ''}><span>${e.nome}${e.ativa ? '' : ` (${t('empresas.inativa')})`}</span></label>`)}
@@ -760,6 +770,21 @@ export async function tela({ usuario, parametros, recarregar }) {
 
 // ------------------------------------------------------------ certificado --
 
+/**
+ * Logotipo do certificado: o da empresa contratante (ou o nome dela, sem logotipo cadastrado);
+ * nos cursos marcados no editor, o da MJ Alimentos Seguros.
+ * Para usar a arte oficial da MJ, troque o selo de texto por <img src="img/mj-alimentos-seguros.png">.
+ */
+function marcaCertificado(c) {
+    if (c.marca === 'mj') {
+        return html`<p class="certificado-marca"><span class="logo-selo" aria-hidden="true">MJ</span> ${t('certificado.marcaMj')}</p>`;
+    }
+    if (c.logo) {
+        return html`<p class="certificado-marca certificado-marca--logo"><img class="certificado-logo" src="${c.logo}" alt="${c.empresa}"></p>`;
+    }
+    return html`<p class="certificado-marca">${c.empresa || t('certificado.marcaMj')}</p>`;
+}
+
 export async function telaCertificado({ usuario, parametros }) {
     const c = await dados.obterCertificado(usuario, parametros[0] ?? '');
     return {
@@ -774,7 +799,7 @@ export async function telaCertificado({ usuario, parametros }) {
             </div>
             <article class="certificado" aria-label="${t('certificado.titulo')}">
                 <div class="certificado-moldura">
-                    <p class="certificado-marca"><span class="logo-selo" aria-hidden="true">MJ</span> MJ Consultoria</p>
+                    ${marcaCertificado(c)}
                     <p class="certificado-rotulo">${t('certificado.titulo')}</p>
                     <p class="certificado-texto">${t('certificado.certificamos')}</p>
                     <p class="certificado-nome">${c.nome}</p>

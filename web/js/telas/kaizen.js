@@ -3,7 +3,7 @@
 // Rotas: #/kaizen (quadro) · #/kaizen/novo · #/kaizen/:id · #/kaizen/:id/editar
 
 import * as dados from '../dados.js';
-import { ehEquipe, ETAPAS_KAIZEN, codigoKaizen, podeEditarKaizen, primeiroNome } from '../regras.js';
+import { ehEquipe, ETAPAS_KAIZEN, codigoKaizen, podeAprovarKaizen, proximaEtapaKaizen, primeiroNome } from '../regras.js';
 import { t, formatarNumero, formatarData, formatarRelativo } from '../textos.js';
 import { html, icone, opcao, avatar, anunciar, irPara, mostrarErro, desenharEm, perguntar, celebrar, indicador } from '../app.js';
 
@@ -21,10 +21,12 @@ function envolve(k, id) {
 
 function cartaoKaizen(usuario, k, equipe) {
     const atrasado = k.prazo && k.prazo < hojeIso() && !['concluido', 'arquivado'].includes(k.etapa);
-    const arrastavel = podeEditarKaizen(usuario, k) && k.etapa !== 'arquivado';
+    // Só o gestor (ou a consultoria) muda a etapa; os demais pedem a aprovação no detalhe.
+    const arrastavel = podeAprovarKaizen(usuario, k) && k.etapa !== 'arquivado';
     return html`<li class="kz-cartao ${k.destaque ? 'kz-cartao--destaque' : ''}" data-kaizen="${k.id}" ${arrastavel ? html`draggable="true"` : ''}>
         <p class="kz-cartao-topo">
             <span class="kz-codigo">${codigoKaizen(k.numero)}</span>
+            ${k.pedidoEtapa ? html`<span class="selo selo--aviso-p" data-dica="${t('kaizen.pedidoPara', { etapa: t(`kaizen.etapas.${k.pedidoEtapa}`) })}">${t('kaizen.aguardaAprovacao')}</span>` : ''}
             ${k.destaque ? html`<span class="kz-estrela" data-dica="${t('kaizen.destaqueDica')}">${icone('star', 'icone icone--p')}<span class="sr-only">${t('kaizen.destaque')}</span></span>` : ''}
             ${equipe ? html`<span class="kz-empresa">${k.empresaNome}</span>` : ''}
         </p>
@@ -81,6 +83,10 @@ async function telaQuadro(usuario, consulta, recarregar) {
     const envolvidos = new Set(ativos.flatMap((k) => [k.autorId, k.responsavelId, ...k.membros]).filter(Boolean));
     const areas = [...new Set(kaizens.map((k) => k.area).filter(Boolean))].sort((a, b) => a.localeCompare(b));
     const destaques = equipe ? kaizens.filter((k) => k.destaque).slice(0, 4) : [];
+    // Gestor: ideias novas e pedidos de avanço que esperam a aprovação dele.
+    const gestor = usuario.perfil === 'company_admin';
+    const aprovacoes = gestor ? kaizens.filter((k) => k.pedidoEtapa && k.etapa !== 'arquivado') : [];
+    const moveEtapas = equipe || gestor;
 
     return {
         titulo: t('kaizen.titulo'),
@@ -102,6 +108,16 @@ async function telaQuadro(usuario, consulta, recarregar) {
                     ${indicador(t('kaizen.pessoasEnvolvidas'), formatarNumero(envolvidos.size))}
                 </dl>
             </section>
+            ${aprovacoes.length ? html`<section class="painel-bloco kz-aprovacoes" aria-labelledby="kz-aprovacoes">
+                <div class="bloco-cabecalho">
+                    <h2 id="kz-aprovacoes" class="bloco-titulo">${icone('clock', 'icone icone--p')}${t('kaizen.aprovacoesTitulo')} (${aprovacoes.length})</h2>
+                    <p class="bloco-nota">${t('kaizen.aprovacoesNota')}</p>
+                </div>
+                <ul class="linhas" role="list">${aprovacoes.map((k) => html`<li class="linha">
+                    <span class="linha-principal"><a class="linha-link" href="#/kaizen/${k.id}">${codigoKaizen(k.numero)} · ${k.titulo}</a><span class="linha-sub">${k.autorNome ?? ''} · ${t(`kaizen.etapas.${k.etapa}`)} → ${t(`kaizen.etapas.${k.pedidoEtapa}`)}</span></span>
+                    <a class="botao botao--secundario botao--p" href="#/kaizen/${k.id}">${t('kaizen.aprovarAvanco', { etapa: t(`kaizen.etapas.${k.pedidoEtapa}`) })}</a>
+                </li>`)}</ul>
+            </section>` : ''}
             <form class="filtros" data-form="filtro" role="search">
                 ${equipe ? html`<div class="campo">
                     <label for="kz-empresa">${t('comum.empresa')}</label>
@@ -121,7 +137,7 @@ async function telaQuadro(usuario, consulta, recarregar) {
                 ${equipe ? '' : html`<label class="campo-check campo-check--alinhado"><input type="checkbox" name="meus" ${filtro.meus ? html`checked` : ''}><span>${t('kaizen.soMeus')}</span></label>`}
                 <label class="campo-check campo-check--alinhado"><input type="checkbox" name="arquivados" ${filtro.arquivados ? html`checked` : ''}><span>${t('kaizen.verArquivados')}</span></label>
             </form>
-            ${kaizens.length ? html`<p class="bloco-nota kz-dica-arrastar">${icone('ciclo', 'icone icone--p')}${t('kaizen.dicaArrastar')}</p>
+            ${kaizens.length ? html`<p class="bloco-nota kz-dica-arrastar">${icone('ciclo', 'icone icone--p')}${moveEtapas ? t('kaizen.dicaArrastar') : t('kaizen.soGestorMove')}</p>
                 <div data-quadro>${colunas(usuario, kaizens, equipe)}</div>` : html`<section class="painel-bloco vazio-destaque">
                 ${icone('lampada')}
                 <h2 class="bloco-titulo">${t('kaizen.vazioTitulo')}</h2>
@@ -211,16 +227,25 @@ function secaoA3(titulo, conteudo, dica = '') {
     </section>`;
 }
 
-const ICONE_EVENTO = { criado: 'lampada', etapa: 'ciclo', comentario: 'conversa', parecer: 'escudo' };
+const ICONE_EVENTO = { criado: 'lampada', etapa: 'ciclo', comentario: 'conversa', parecer: 'escudo', pedido: 'clock', recusa: 'close' };
+
+function fraseEvento(e) {
+    const nome = e.autorNome ?? t('atividade.alguem');
+    switch (e.tipo) {
+        case 'etapa': return t('kaizen.eventoEtapa', { nome, etapa: t(`kaizen.etapas.${e.texto}`) });
+        case 'criado': return t('kaizen.eventoCriado', { nome });
+        case 'pedido': return t('kaizen.eventoPedido', { nome, etapa: t(`kaizen.etapas.${e.texto}`) });
+        case 'recusa': return t('kaizen.eventoRecusa', { nome });
+        default: return html`<strong>${nome}</strong>${e.tipo === 'parecer' ? html` <span class="selo selo--marca">${t('kaizen.parecerConsultoria')}</span>` : ''}`;
+    }
+}
 
 function linhaDoTempo(k) {
     return html`<ol class="linha-tempo" role="list">${k.eventos.map((e) => html`<li class="evento evento--${e.tipo}">
         <span class="evento-icone" aria-hidden="true">${icone(ICONE_EVENTO[e.tipo] ?? 'arrow', 'icone icone--p')}</span>
         <div class="evento-corpo">
-            <p class="evento-frase">${e.tipo === 'etapa' ? t('kaizen.eventoEtapa', { nome: e.autorNome ?? t('atividade.alguem'), etapa: t(`kaizen.etapas.${e.texto}`) })
-                : e.tipo === 'criado' ? t('kaizen.eventoCriado', { nome: e.autorNome ?? t('atividade.alguem') })
-                    : html`<strong>${e.autorNome ?? t('atividade.alguem')}</strong>${e.tipo === 'parecer' ? html` <span class="selo selo--marca">${t('kaizen.parecerConsultoria')}</span>` : ''}`}</p>
-            ${['comentario', 'parecer'].includes(e.tipo) ? html`<p class="evento-texto">${e.texto}</p>` : ''}
+            <p class="evento-frase">${fraseEvento(e)}</p>
+            ${['comentario', 'parecer', 'recusa'].includes(e.tipo) && e.texto ? html`<p class="evento-texto">${e.texto}</p>` : ''}
             <p class="atividade-meta"><time datetime="${e.em}">${formatarRelativo(e.em)}</time></p>
         </div>
     </li>`)}</ol>`;
@@ -230,20 +255,38 @@ async function telaDetalhe(usuario, id, recarregar) {
     const k = await dados.obterKaizen(id);
     const etapas = ETAPAS_KAIZEN;
     const posicao = etapas.indexOf(k.etapa);
-    const proxima = posicao >= 0 && posicao < etapas.length - 1 ? etapas[posicao + 1] : null;
+    const proxima = proximaEtapaKaizen(k.etapa);
     const anterior = posicao > 0 ? etapas[posicao - 1] : null;
     const podeEditar = k.pode?.editar;
+    // Só o gestor (ou a consultoria) muda a etapa; quem participa pede a aprovação.
     const podeAprovar = k.pode?.aprovar;
+    const nomeEtapa = (e) => t(`kaizen.etapas.${e}`);
     const concluido = k.etapa === 'concluido';
 
     let avancar = '';
-    if (podeEditar && k.etapa === 'arquivado') {
+    if (podeAprovar && k.etapa === 'arquivado') {
         avancar = html`<button type="button" class="botao botao--secundario" data-mover="ideia">${icone('restore', 'icone icone--p')}${t('kaizen.reativar')}</button>`;
-    } else if (podeEditar && proxima) {
-        avancar = proxima === 'concluido' && !podeAprovar
-            ? html`<p class="nota">${icone('clock', 'icone icone--p')}${t('kaizen.aguardandoGestor')}</p>`
-            : html`<button type="button" class="botao botao--primario" data-mover="${proxima}">${t('kaizen.avancarPara', { etapa: t(`kaizen.etapas.${proxima}`) })}${icone('arrow', 'icone icone--p')}</button>`;
+    } else if (podeAprovar && proxima) {
+        avancar = html`<button type="button" class="botao botao--primario" data-mover="${proxima}">${k.pedidoEtapa === proxima ? t('kaizen.aprovarAvanco', { etapa: nomeEtapa(proxima) }) : t('kaizen.avancarPara', { etapa: nomeEtapa(proxima) })}${icone('arrow', 'icone icone--p')}</button>`;
+    } else if (podeEditar && proxima && k.etapa !== 'arquivado') {
+        avancar = k.pedidoEtapa
+            ? html`<p class="nota">${icone('clock', 'icone icone--p')}${t('kaizen.pedidoPendente', { etapa: nomeEtapa(k.pedidoEtapa) })}</p>`
+            : html`<button type="button" class="botao botao--primario" data-pedir>${t('kaizen.pedirAvanco', { etapa: nomeEtapa(proxima) })}${icone('send', 'icone icone--p')}</button>`;
     }
+    // Gestor: o pedido da equipe em destaque, com aprovar ou recusar (o motivo vai para o histórico).
+    const pedido = podeAprovar && k.pedidoEtapa && k.etapa !== 'arquivado' ? html`<section class="painel-bloco kz-pedido" aria-labelledby="kz-pedido-titulo">
+        <h2 id="kz-pedido-titulo" class="bloco-titulo">${icone('clock', 'icone icone--p')}${t('kaizen.pedidoBanner', { etapa: nomeEtapa(k.pedidoEtapa) })}</h2>
+        <form class="formulario formulario--compacto" data-form="recusa" novalidate>
+            <div class="campo">
+                <label for="kz-recusa">${t('kaizen.motivoRecusa')}</label>
+                <textarea id="kz-recusa" name="motivo" rows="2" maxlength="1000"></textarea>
+            </div>
+            <div class="acoes">
+                <button type="button" class="botao botao--primario" data-mover="${k.pedidoEtapa}">${icone('check', 'icone icone--p')}${t('kaizen.aprovarAvanco', { etapa: nomeEtapa(k.pedidoEtapa) })}</button>
+                <button type="submit" class="botao botao--secundario">${t('kaizen.recusar')}</button>
+            </div>
+        </form>
+    </section>` : '';
 
     return {
         titulo: `${codigoKaizen(k.numero)} · ${k.titulo}`,
@@ -266,10 +309,11 @@ async function telaDetalhe(usuario, id, recarregar) {
                 <div class="pdca-acoes">
                     ${k.etapa === 'arquivado' ? html`<span class="selo selo--neutro">${t('kaizen.etapas.arquivado')}</span>` : ''}
                     ${avancar}
-                    ${podeEditar && anterior && k.etapa !== 'arquivado' && (!concluido || podeAprovar) ? html`<button type="button" class="botao botao--fantasma" data-mover="${anterior}">${icone('back', 'icone icone--p')}${t('kaizen.voltarPara', { etapa: t(`kaizen.etapas.${anterior}`) })}</button>` : ''}
-                    ${podeEditar && !['arquivado', 'concluido'].includes(k.etapa) ? html`<button type="button" class="botao botao--fantasma" data-mover="arquivado">${t('kaizen.arquivar')}</button>` : ''}
+                    ${podeAprovar && anterior && k.etapa !== 'arquivado' ? html`<button type="button" class="botao botao--fantasma" data-mover="${anterior}">${icone('back', 'icone icone--p')}${t('kaizen.voltarPara', { etapa: nomeEtapa(anterior) })}</button>` : ''}
+                    ${podeAprovar && !['arquivado', 'concluido'].includes(k.etapa) ? html`<button type="button" class="botao botao--fantasma" data-mover="arquivado">${t('kaizen.arquivar')}</button>` : ''}
                 </div>
             </section>
+            ${pedido}
 
             <div class="painel-grade">
                 <div class="painel-coluna">
@@ -340,6 +384,19 @@ async function telaDetalhe(usuario, id, recarregar) {
 
         montar(raiz) {
             raiz.addEventListener('click', async (evento) => {
+                const pedir = evento.target.closest('[data-pedir]');
+                if (pedir) {
+                    pedir.disabled = true;
+                    try {
+                        await dados.pedirAvancoKaizen(k.id);
+                        anunciar(t('kaizen.pedidoEnviado'));
+                        await recarregar();
+                    } catch (erro) {
+                        pedir.disabled = false;
+                        mostrarErro(erro);
+                    }
+                    return;
+                }
                 const botao = evento.target.closest('[data-mover]');
                 if (!botao) return;
                 const etapa = botao.dataset.mover;
@@ -367,6 +424,17 @@ async function telaDetalhe(usuario, id, recarregar) {
                     await recarregar();
                 } catch (erro) {
                     mostrarErro(erro, comentario);
+                }
+            });
+            const recusa = raiz.querySelector('[data-form="recusa"]');
+            recusa?.addEventListener('submit', async (evento) => {
+                evento.preventDefault();
+                try {
+                    await dados.recusarPedidoKaizen(k.id, recusa.motivo.value);
+                    anunciar(t('kaizen.pedidoRecusado'));
+                    await recarregar();
+                } catch (erro) {
+                    mostrarErro(erro, recusa);
                 }
             });
             const parecer = raiz.querySelector('[data-form="parecer"]');
@@ -423,7 +491,13 @@ async function telaEditor(usuario, id, consulta) {
         dados.listarDiagnosticos({ empresaId: estado.empresaId }).catch(() => []),
     ]);
     let pessoas = pessoasIniciais;
-    const dimensoes = [...new Set(diagnosticos.filter((d) => !estado.empresaId || d.empresaId === estado.empresaId).flatMap((d) => (d.dimensoes ?? []).map((x) => x.nome)))];
+    // Dimensões da cultura de qualidade e segurança de alimentos (as do modelo e as dos diagnósticos
+    // da empresa). Um valor antigo, fora da lista, continua aparecendo para não se perder ao salvar.
+    const dimensoes = [...new Set([
+        ...t('kaizen.categorias'),
+        ...diagnosticos.filter((d) => !estado.empresaId || d.empresaId === estado.empresaId).flatMap((d) => (d.dimensoes ?? []).map((x) => x.nome)),
+        ...(estado.dimensao ? [estado.dimensao] : []),
+    ])];
     const voltar = existente ? `#/kaizen/${existente.id}` : '#/kaizen';
     const campoTexto = (nome, linhas, maximo, obrigatorio = false) => html`<div class="campo">
         <label for="kz-${nome}">${t(`kaizen.campos.${nome}`)}${obrigatorio ? '' : html` <span class="rotulo-opcional">(${t('comum.opcional')})</span>`}</label>
@@ -461,8 +535,10 @@ async function telaEditor(usuario, id, consulta) {
                         </div>
                         <div class="campo">
                             <label for="kz-dimensao">${t('kaizen.dimensao')} <span class="rotulo-opcional">(${t('comum.opcional')})</span></label>
-                            <input id="kz-dimensao" name="dimensao" value="${estado.dimensao}" maxlength="120" list="kz-dimensoes" autocomplete="off" aria-describedby="kz-dimensao-dica">
-                            <datalist id="kz-dimensoes">${dimensoes.map((n) => html`<option value="${n}"></option>`)}</datalist>
+                            <select id="kz-dimensao" name="dimensao" aria-describedby="kz-dimensao-dica">
+                                ${opcao('', t('kaizen.semDimensao'), !estado.dimensao)}
+                                ${dimensoes.map((n) => opcao(n, n, n === estado.dimensao))}
+                            </select>
                             <p id="kz-dimensao-dica" class="campo-dica">${t('kaizen.dimensaoDica')}</p>
                         </div>
                     </div>

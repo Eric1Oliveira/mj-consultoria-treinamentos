@@ -8,6 +8,17 @@ const filtro = { busca: '', situacao: 'todas' };
 
 const marcaEmpresa = (empresa) => seloEmpresa(empresa);
 
+// Contato para mudar de plano. O limite em si é conferido no banco (tabela plano).
+const WHATSAPP_PLANO = '5511978042160';
+
+function avisoLimite(plano) {
+    const link = `https://wa.me/${WHATSAPP_PLANO}?text=${encodeURIComponent(t('empresas.whatsappMensagem'))}`;
+    return html`<div class="nota nota--aviso" role="status">
+        ${icone('alert', 'icone icone--p')}<span class="nota-texto">${t('empresas.limiteTexto', { limite: plano.limite })}</span>
+        <a class="botao botao--primario botao--p" href="${link}" target="_blank" rel="noopener">${t('empresas.falarWhatsapp')}${icone('external', 'icone icone--p')}</a>
+    </div>`;
+}
+
 function listaEmpresas(empresas) {
     if (!empresas.length) return html`<p class="vazio">${t('empresas.nenhuma')}</p>`;
     return html`<ul class="linhas" role="list">
@@ -27,7 +38,7 @@ function listaEmpresas(empresas) {
 }
 
 async function telaLista(usuario) {
-    const empresas = await dados.listarEmpresas(usuario, { ...filtro, comLogo: true });
+    const [empresas, plano] = await Promise.all([dados.listarEmpresas(usuario, { ...filtro, comLogo: true }), dados.usoDoPlano()]);
     return {
         titulo: t('empresas.titulo'),
         conteudo: html`
@@ -36,8 +47,10 @@ async function telaLista(usuario) {
                     <h1 class="titulo" tabindex="-1">${t('empresas.titulo')}</h1>
                     <p class="subtitulo">${t('empresas.sub')}</p>
                 </div>
-                <a class="botao botao--primario" href="#/empresas/nova">${icone('plus')}${t('empresas.nova')}</a>
+                ${plano.limite !== null ? html`<span class="selo ${plano.esgotado ? 'selo--aviso' : 'selo--neutro'}">${t('empresas.planoUso', { ativas: formatarNumero(plano.ativas), limite: formatarNumero(plano.limite) })}</span>` : ''}
+                ${plano.esgotado ? '' : html`<a class="botao botao--primario" href="#/empresas/nova">${icone('plus')}${t('empresas.nova')}</a>`}
             </header>
+            ${plano.esgotado ? avisoLimite(plano) : ''}
             <section class="painel-bloco" aria-labelledby="empresas-lista-titulo">
                 <h2 id="empresas-lista-titulo" class="sr-only">${t('empresas.titulo')}</h2>
                 <form class="filtros" data-form="filtro" role="search">
@@ -78,6 +91,18 @@ async function telaEditor(usuario, id) {
     const existente = id ? await dados.obterEmpresa(id) : null;
     if (id && !existente) throw new dados.ErroDados('nao-encontrado');
     const e = existente ?? { nome: '', identificador: '', mensagem: '', ativa: true, solicitacoesAtivas: true, aprovador: 'empresa' };
+    const plano = existente ? null : await dados.usoDoPlano();
+    if (plano?.esgotado) {
+        return {
+            titulo: t('empresas.novaTitulo'),
+            conteudo: html`
+                <a class="voltar" href="#/empresas">${icone('back', 'icone icone--p')}${t('empresas.voltar')}</a>
+                <header class="cabecalho">
+                    <h1 class="titulo" tabindex="-1">${t('empresas.novaTitulo')}</h1>
+                </header>
+                ${avisoLimite(plano)}`,
+        };
+    }
 
     return {
         titulo: existente ? t('empresas.editarTitulo') : t('empresas.novaTitulo'),

@@ -2353,6 +2353,11 @@ button {
     background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
+/* Texto que divide a nota com um botão: ocupa a linha e o botão quebra para baixo se faltar espaço. */
+.nota-texto {
+    flex: 1 1 18rem;
+}
+
 /* Nota só com ícone e texto: o texto fica ao lado do ícone (com botão, os itens podem quebrar linha). */
 .nota:not(:has(.botao)) {
     flex-wrap: nowrap;
@@ -3572,6 +3577,14 @@ button {
 .certificado-marca .logo-selo {
     background: #0f4c5c;
     color: #fff;
+}
+
+/* Logotipo da empresa contratante no certificado. */
+.certificado-logo {
+    display: block;
+    max-width: 220px;
+    max-height: 72px;
+    object-fit: contain;
 }
 
 .certificado-rotulo {
@@ -7574,7 +7587,137 @@ legend .kz-pdca {
 
 /* -------------------------------------------------------- impressão */
 
+/* --------------------------------------------- cultura: avaliação e plano de ações -- */
+
+/* Avaliação do administrador: o passo que libera o resultado ao gestor, com destaque discreto. */
+.avaliacao-admin {
+    border-left: 3px solid var(--warning);
+}
+
+.parecer-consultoria {
+    border-left: 3px solid var(--marca, var(--brand));
+}
+
+.avaliacao-admin .bloco-titulo,
+.parecer-consultoria .bloco-titulo,
+.kz-pedido .bloco-titulo,
+.kz-aprovacoes .bloco-titulo,
+.desafio-mes .bloco-titulo {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.acoes-resumo {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 40rem) {
+    .acoes-resumo {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.tabela--acoes {
+    margin-top: 1rem;
+}
+
+.tabela--acoes .acao--concluida th {
+    color: var(--ink-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.acao-status {
+    min-height: 2.25rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--line-forte);
+    border-radius: var(--raio-p);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.875rem;
+}
+
+.acoes-linha {
+    white-space: nowrap;
+    text-align: right;
+}
+
+.acao-form {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+}
+
+/* Como a maturidade é calculada (recolhível). */
+.calculo > summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    list-style: none;
+    cursor: pointer;
+}
+
+.calculo > summary::-webkit-details-marker {
+    display: none;
+}
+
+.calculo > summary .recolhivel-seta {
+    margin-left: auto;
+    transform: none;
+}
+
+.calculo[open] > summary .recolhivel-seta {
+    transform: rotate(180deg);
+}
+
+.calculo-corpo {
+    display: grid;
+    gap: 0.6rem;
+    max-width: 70ch;
+    margin-top: 1rem;
+    color: var(--ink-muted);
+}
+
+.calculo-niveis {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.calculo-niveis li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.calculo-faixa {
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+}
+
+/* Kaizen: pedidos que esperam o gestor; ranking: desafio do mês. */
+.kz-pedido,
+.kz-aprovacoes {
+    border-left: 3px solid var(--warning);
+}
+
+.desafio-mes-curso {
+    margin: 0.5rem 0 0.75rem;
+    font-weight: 650;
+}
+
+.curso-selo-dmqsa {
+    margin-bottom: 0.4rem;
+}
+
 @media print {
+    .calculo > summary .recolhivel-seta {
+        display: none;
+    }
+
     .lateral,
     .topo,
     .barra-inferior,

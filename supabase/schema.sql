@@ -152,6 +152,16 @@ alter table public.perfis add column if not exists area text not null default ''
 -- Prazo combinado na atribuição do curso (opcional).
 alter table public.matriculas add column if not exists prazo date;
 
+-- Logotipo do certificado: o da empresa contratante (padrão) ou o da MJ Alimentos Seguros.
+alter table public.cursos add column if not exists certificado_marca text not null default 'empresa' check (certificado_marca in ('empresa', 'mj'));
+-- DMQSA (Diálogo Mensal de Qualidade e Segurança de Alimentos): ler/assistir vale o desafio do mês.
+alter table public.cursos add column if not exists dmqsa boolean not null default false;
+-- O certificado guarda a marca e a empresa do momento da emissão.
+alter table public.certificados add column if not exists marca text not null default 'empresa' check (marca in ('empresa', 'mj'));
+alter table public.certificados add column if not exists empresa_id uuid references public.empresas (id) on delete set null;
+update public.certificados c set empresa_id = p.empresa_id
+  from public.perfis p where p.id = c.usuario_id and c.empresa_id is null and p.empresa_id is not null;
+
 -- --------------------------------------------- cultura e maturidade --
 -- Modelos de diagnóstico (questionários de referência, baseados em normas).
 -- dimensoes: [{ id, nome, descricao, recomendacao, cursos: [uuid] }]
@@ -217,6 +227,34 @@ create table if not exists public.diagnosticos_respostas (
     dia            date not null default current_date
 );
 
+-- Depois de encerrado, o resultado fica só com o administrador. Ele avalia, escreve o
+-- parecer e libera para o gestor da empresa (liberado_em). Sem liberação, o gestor não vê.
+alter table public.diagnosticos add column if not exists liberado_em  timestamptz;
+alter table public.diagnosticos add column if not exists liberado_por uuid references public.perfis (id) on delete set null;
+alter table public.diagnosticos add column if not exists parecer      text not null default '' check (char_length(parecer) <= 3000);
+
+-- A coleta fica aberta no máximo 30 dias. Diagnósticos antigos sem data de fim ganham uma.
+update public.diagnosticos set fecha_em = greatest(criado_em::date + 30, current_date)
+ where situacao = 'aberto' and fecha_em is null;
+
+-- Plano de ação da cultura: o que a empresa faz para subir a maturidade, com aplicação
+-- (função/cargo), responsável, prazo e status para o acompanhamento.
+create table if not exists public.diagnosticos_acoes (
+    id             uuid primary key default gen_random_uuid(),
+    diagnostico_id uuid not null references public.diagnosticos (id) on delete cascade,
+    empresa_id     uuid not null references public.empresas (id) on delete cascade,
+    dimensao       text not null default '' check (char_length(dimensao) <= 40),
+    titulo         text not null check (char_length(titulo) between 1 and 300),
+    funcao         text not null default '' check (char_length(funcao) <= 120),
+    responsavel    text not null default '' check (char_length(responsavel) <= 120),
+    prazo          date,
+    status         text not null default 'pendente' check (status in ('pendente', 'andamento', 'concluida')),
+    criado_por     uuid references public.perfis (id) on delete set null,
+    criado_em      timestamptz not null default now(),
+    atualizado_em  timestamptz not null default now(),
+    concluido_em   timestamptz
+);
+
 -- ----------------------------------------------------------- kaizen --
 -- Projeto de melhoria no formato A3 / PDCA.
 create table if not exists public.kaizens (
@@ -253,15 +291,25 @@ create table if not exists public.kaizens_eventos (
     kaizen_id  uuid not null references public.kaizens (id) on delete cascade,
     autor_id   uuid references public.perfis (id) on delete set null,
     autor_nome text,
-    tipo       text not null check (tipo in ('criado', 'comentario', 'etapa', 'parecer')),
+    tipo       text not null check (tipo in ('criado', 'comentario', 'etapa', 'parecer', 'pedido', 'recusa')),
     texto      text not null default '' check (char_length(texto) <= 1000),
     em         timestamptz not null default now()
 );
+-- Bancos criados antes: o pedido de avanço e a recusa do gestor entram no histórico.
+alter table public.kaizens_eventos drop constraint if exists kaizens_eventos_tipo_check;
+alter table public.kaizens_eventos add constraint kaizens_eventos_tipo_check
+    check (tipo in ('criado', 'comentario', 'etapa', 'parecer', 'pedido', 'recusa'));
+
+-- Só o gestor (ou a consultoria) muda a etapa. Quem participa pede o avanço; a ideia
+-- nova já nasce pedindo aprovação. pedido_etapa = etapa pedida, à espera do gestor.
+alter table public.kaizens add column if not exists pedido_etapa text
+    check (pedido_etapa in ('planejar', 'executar', 'verificar', 'concluido'));
 
 create index if not exists diagnosticos_empresa_idx    on public.diagnosticos (empresa_id, criado_em desc);
 create index if not exists diag_respostas_idx          on public.diagnosticos_respostas (diagnostico_id);
 create index if not exists kaizens_empresa_idx         on public.kaizens (empresa_id, etapa);
 create index if not exists kaizens_eventos_idx         on public.kaizens_eventos (kaizen_id, em);
+create index if not exists diag_acoes_idx              on public.diagnosticos_acoes (diagnostico_id, criado_em);
 create index if not exists pontos_tipo_idx             on public.pontos (tipo, em);
 create index if not exists perfis_empresa_idx       on public.perfis (empresa_id);
 create index if not exists convites_empresa_idx     on public.convites (empresa_id);
@@ -272,6 +320,16 @@ create index if not exists certificados_usuario_idx on public.certificados (usua
 create index if not exists pontos_usuario_idx       on public.pontos (usuario_id, em);
 create index if not exists auditoria_em_idx         on public.auditoria (em desc);
 create index if not exists auditoria_empresa_idx    on public.auditoria (empresa_id);
+
+-- ------------------------------------------------------- plano contratado --
+-- Uma linha só: quantas empresas ativas o plano da consultoria permite (usuários são
+-- ilimitados). Muda só pelo SQL Editor — nenhuma função do site grava aqui:
+--   update public.plano set limite_empresas = 5;
+create table if not exists public.plano (
+    id              boolean primary key default true check (id),
+    limite_empresas int not null default 3 check (limite_empresas >= 0)
+);
+insert into public.plano (id) values (true) on conflict do nothing;
 
 -- ------------------------------------------------------- funções auxiliares --
 
@@ -338,7 +396,9 @@ language sql stable as $$
         and ((p_perfil in ('company_admin', 'student')) = (p_empresa.id is not null))
         and (p_empresa.id is null or p_empresa.ativa)
         and case p_eu.perfil
-            when 'admin' then true
+            -- O perfil de consultora saiu da plataforma: ninguém convida consultoras novas
+            -- (as contas que já existem continuam funcionando).
+            when 'admin' then p_perfil <> 'consultant'
             when 'consultant' then p_perfil in ('company_admin', 'student')
             when 'company_admin' then p_perfil = 'student' and p_empresa.id = p_eu.empresa_id
             else false end
@@ -399,14 +459,14 @@ begin
     return coalesce(v, 0);
 end $$;
 
--- Desafio semanal: 3 aulas em 7 dias = 25 pontos (uma vez por semana).
-create or replace function public._verificar_desafio(p_usuario uuid) returns int
+-- Desafio do mês: ler/assistir todas as aulas do DMQSA (curso marcado como dmqsa) = 50 pontos,
+-- uma vez por DMQSA. Substitui o antigo desafio semanal (3 aulas em 7 dias).
+drop function if exists public._verificar_desafio(uuid);
+create or replace function public._desafio_dmqsa(p_usuario uuid, c public.cursos, p_feitas text[]) returns int
 language plpgsql security definer set search_path = public as $$
 begin
-    if (select count(*) from pontos where usuario_id = p_usuario and tipo = 'aula' and em >= now() - interval '7 days') < 3 then
-        return 0;
-    end if;
-    return _somar_pontos(p_usuario, 'desafio', 'semana-' || floor(extract(epoch from now()) / (7 * 86400))::bigint, 25);
+    if not c.dmqsa or cardinality(_ids_aulas(c)) = 0 or not (_ids_aulas(c) <@ p_feitas) then return 0; end if;
+    return _somar_pontos(p_usuario, 'desafio', 'dmqsa-' || c.id, 50);
 end $$;
 
 -- Curso completo = todas as aulas + avaliação aprovada (se houver). Emite o certificado.
@@ -423,11 +483,12 @@ begin
        and not exists (select 1 from jsonb_array_elements(m.tentativas) t where (t ->> 'aprovado')::boolean) then
         return;
     end if;
-    insert into certificados (curso_id, usuario_id, codigo, nome, curso_titulo, carga_horaria, empresa_nome)
+    insert into certificados (curso_id, usuario_id, codigo, nome, curso_titulo, carga_horaria, empresa_nome, marca, empresa_id)
     values (p_curso.id, p_pessoa.id,
             'MJC-' || upper(encode(gen_random_bytes(2), 'hex')) || '-' || upper(encode(gen_random_bytes(2), 'hex')),
             p_pessoa.nome, p_curso.titulo, p_curso.carga_horaria,
-            coalesce((select nome from empresas where id = p_pessoa.empresa_id), ''))
+            coalesce((select nome from empresas where id = p_pessoa.empresa_id), ''),
+            p_curso.certificado_marca, p_pessoa.empresa_id)
     returning id into v_cert;
     update matriculas set concluido_em = now(), certificado_id = v_cert where id = p_matricula;
     perform _somar_pontos(p_pessoa.id, 'curso', p_curso.id::text, 50);
@@ -454,6 +515,10 @@ alter table public.diagnosticos_participacoes enable row level security;
 alter table public.diagnosticos_respostas     enable row level security; -- sem política: ninguém lê pela API
 alter table public.kaizens                    enable row level security;
 alter table public.kaizens_eventos            enable row level security;
+alter table public.plano                      enable row level security;
+
+drop policy if exists ler on public.plano;
+create policy ler on public.plano for select to authenticated using ((select sou_equipe()));
 
 drop policy if exists ler on public.diagnosticos_modelos;
 create policy ler on public.diagnosticos_modelos for select to authenticated
@@ -466,6 +531,13 @@ create policy ler on public.diagnosticos for select to authenticated
 drop policy if exists ler on public.diagnosticos_participacoes;
 create policy ler on public.diagnosticos_participacoes for select to authenticated
     using (usuario_id = (select auth.uid()) or (select sou_equipe()));
+
+-- Plano de ação: a equipe; o gestor da empresa só depois que o resultado foi liberado.
+alter table public.diagnosticos_acoes enable row level security;
+drop policy if exists ler on public.diagnosticos_acoes;
+create policy ler on public.diagnosticos_acoes for select to authenticated
+    using ((select sou_equipe()) or ((select meu_papel()) = 'company_admin' and empresa_id = (select minha_empresa())
+        and exists (select 1 from diagnosticos d where d.id = diagnostico_id and d.liberado_em is not null)));
 
 drop policy if exists ler on public.kaizens;
 create policy ler on public.kaizens for select to authenticated
@@ -642,6 +714,8 @@ declare
     v_nome text := _texto(entrada ->> 'nome', 150);
     v_ident text := lower(_texto(entrada ->> 'identificador', 60));
     v_aprovador text := case when entrada ->> 'aprovador' = 'consultoria' then 'consultoria' else 'empresa' end;
+    v_ativa boolean := coalesce((entrada ->> 'ativa')::boolean, false);
+    v_limite int;
     erros jsonb := '{}';
     v empresas;
 begin
@@ -652,9 +726,18 @@ begin
     end if;
     if erros <> '{}' then perform _erro('validacao', erros); end if;
 
+    -- Limite do plano: vale para cadastrar e para reativar. Travar a linha do plano
+    -- enfileira gravações simultâneas, para duas não passarem juntas do limite.
+    if v_id is null or (v_ativa and not (select ativa from empresas where id = v_id)) then
+        select limite_empresas into v_limite from plano for update;
+        if (select count(*) from empresas where ativa) >= v_limite then
+            perform _erro('limite-plano', jsonb_build_object('limite', v_limite));
+        end if;
+    end if;
+
     if v_id is not null then
         update empresas set nome = v_nome, identificador = v_ident, mensagem = _texto(entrada ->> 'mensagem', 300),
-            ativa = coalesce((entrada ->> 'ativa')::boolean, false),
+            ativa = v_ativa,
             solicitacoes_ativas = coalesce((entrada ->> 'solicitacoesAtivas')::boolean, false), aprovador = v_aprovador
         where id = v_id returning * into v;
         perform _registrar('empresa.atualizada', v_eu, v.id, v.nome);
@@ -917,6 +1000,8 @@ begin
         tentativas = least(10, greatest(1, coalesce((entrada ->> 'tentativas')::int, 3))),
         ativo = coalesce((entrada ->> 'ativo')::boolean, false),
         avanco_automatico = coalesce((entrada ->> 'avancoAutomatico')::boolean, false),
+        certificado_marca = case when entrada ->> 'certificadoMarca' = 'mj' then 'mj' else 'empresa' end,
+        dmqsa = coalesce((entrada ->> 'dmqsa')::boolean, false),
         empresas = v_empresas,
         modulos = v_mod,
         questoes = (select coalesce(jsonb_agg(q - 'correta'), '[]') from jsonb_array_elements(v_q) q)
@@ -1028,7 +1113,7 @@ begin
     if not (p_aula = any (m.aulas_concluidas)) then
         update matriculas set aulas_concluidas = aulas_concluidas || p_aula where id = m.id;
         ganhos := ganhos + _somar_pontos(v_eu.id, 'aula', p_aula, 10);
-        ganhos := ganhos + _verificar_desafio(v_eu.id);
+        ganhos := ganhos + _desafio_dmqsa(v_eu.id, c, m.aulas_concluidas || p_aula);
         perform _registrar('aula.concluida', v_eu, v_eu.empresa_id, v_titulo);
     end if;
     update matriculas set ultima_atividade = now() where id = m.id;
@@ -1115,7 +1200,8 @@ begin
         select p.id, p.nome, p.area, p.empresa_id, e.nome as empresa,
                coalesce((select sum(pt.valor) from pontos pt where pt.usuario_id = p.id and pt.em >= v_desde), 0)::int as pontos,
                (select count(*) from matriculas m where m.usuario_id = p.id and m.concluido_em >= v_desde)::int as cursos,
-               (select count(*) from pontos pt where pt.usuario_id = p.id and pt.tipo = 'kaizen' and pt.em >= v_desde)::int as kaizens
+               (select count(*) from kaizens k where k.etapa = 'concluido' and k.concluido_em >= v_desde
+                   and (p.id in (k.autor_id, k.responsavel_id) or p.id = any (k.membros)))::int as kaizens
         from perfis p join empresas e on e.id = p.empresa_id
         where p.ativo and e.ativa and p.perfil in ('student', 'company_admin')
           and (v_empresa is null or p.empresa_id = v_empresa)
@@ -1311,8 +1397,11 @@ begin
                  or not exists (select 1 from jsonb_array_elements(m.dimensoes) dm where dm ->> 'id' = x ->> 'dimensao'))) then
         erros := erros || '{"extras":"extras"}';
     end if;
-    v_fecha := nullif(entrada ->> 'fechaEm', '')::date;
-    if v_fecha is not null and v_fecha < current_date then erros := erros || '{"fechaEm":"dataPassada"}'; end if;
+    -- A coleta fica aberta por no máximo 30 dias (sem data informada: 30 dias a partir de hoje).
+    v_fecha := coalesce(nullif(entrada ->> 'fechaEm', '')::date, current_date + 30);
+    if v_fecha < current_date then erros := erros || '{"fechaEm":"dataPassada"}';
+    elsif v_fecha > current_date + 30 then erros := erros || '{"fechaEm":"prazo30"}';
+    end if;
     if erros <> '{}' then perform _erro('validacao', erros); end if;
 
     insert into diagnosticos (empresa_id, modelo_id, titulo, norma, interpretacao, niveis, dimensoes, questoes,
@@ -1350,15 +1439,19 @@ begin
     return to_jsonb(d);
 end $$;
 
+-- Reabrir é só da equipe (o gestor não estende a coleta além dos 30 dias). O resultado volta
+-- a ficar só com o administrador até ser liberado de novo.
 create or replace function public.reabrir_diagnostico(p_id uuid, p_fecha_em date default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare v_eu perfis := _exigir_eu(); d diagnosticos := _diagnostico_gerivel(v_eu, p_id);
+declare v_eu perfis := _exigir_equipe(); d diagnosticos := _diagnostico_gerivel(v_eu, p_id); v_fecha date := coalesce(p_fecha_em, current_date + 30);
 begin
-    if p_fecha_em is not null and p_fecha_em < current_date then perform _erro('validacao', '{"fechaEm":"dataPassada"}'); end if;
+    if v_fecha < current_date then perform _erro('validacao', '{"fechaEm":"dataPassada"}'); end if;
+    if v_fecha > current_date + 30 then perform _erro('validacao', '{"fechaEm":"prazo30"}'); end if;
     if exists (select 1 from diagnosticos x where x.empresa_id = d.empresa_id and x.modelo_id = d.modelo_id and x.id <> d.id and _diagnostico_aberto(x)) then
         perform _erro('validacao', '{"diagnostico":"diagnosticoAberto"}');
     end if;
-    update diagnosticos set situacao = 'aberto', encerrado_em = null, fecha_em = p_fecha_em where id = d.id returning * into d;
+    update diagnosticos set situacao = 'aberto', encerrado_em = null, fecha_em = v_fecha, liberado_em = null, liberado_por = null
+    where id = d.id returning * into d;
     perform _registrar('diagnostico.reaberto', v_eu, d.empresa_id, d.titulo);
     return to_jsonb(d);
 end $$;
@@ -1419,9 +1512,10 @@ create or replace function public.listar_diagnosticos(p_empresa uuid default nul
 language plpgsql stable security definer set search_path = public as $$
 declare v_eu perfis := _exigir_eu();
 begin
-    return (select coalesce(jsonb_agg((to_jsonb(d) - 'questoes') || jsonb_build_object(
+    return (select coalesce(jsonb_agg((to_jsonb(d) - 'questoes' - 'parecer') || jsonb_build_object(
             'empresa_nome', e.nome,
             'aberto', _diagnostico_aberto(d),
+            'liberado', d.liberado_em is not null,
             'perguntas', jsonb_array_length(d.questoes),
             'respondentes', (select count(*) from diagnosticos_participacoes p where p.diagnostico_id = d.id),
             'elegiveis', (select count(*) from perfis pf where pf.empresa_id = d.empresa_id and pf.ativo and _publico_inclui(d.publico, pf.perfil)),
@@ -1433,25 +1527,106 @@ begin
                    else d.empresa_id = v_eu.empresa_id end);
 end $$;
 
--- Equipe e gestor da empresa: resultado completo (com o histórico do mesmo modelo na empresa,
--- para a evolução). Quem é da empresa: o resumo, depois de encerrado.
+-- Equipe: resultado completo sempre. Gestor da empresa: completo (com o parecer do administrador)
+-- só depois da liberação. Funcionário: o resumo, depois de liberado. O histórico do mesmo modelo
+-- (para a evolução) traz, para o gestor, só os diagnósticos já liberados.
 create or replace function public.resultado_diagnostico(p_id uuid) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
     v_eu perfis := _exigir_eu();
     d diagnosticos;
+    v_equipe boolean := v_eu.perfil in ('admin', 'consultant');
     v_completo boolean;
 begin
     select * into d from diagnosticos where id = p_id;
     if d.id is null then perform _erro('nao-encontrado'); end if;
-    v_completo := v_eu.perfil in ('admin', 'consultant') or (v_eu.perfil = 'company_admin' and v_eu.empresa_id = d.empresa_id);
-    if not v_completo and not (v_eu.empresa_id = d.empresa_id and not _diagnostico_aberto(d)) then perform _erro('proibido'); end if;
+    v_completo := v_equipe or (v_eu.perfil = 'company_admin' and v_eu.empresa_id = d.empresa_id and d.liberado_em is not null);
+    if not v_completo and not (v_eu.empresa_id = d.empresa_id and d.liberado_em is not null) then perform _erro('proibido'); end if;
     return _resultado_diagnostico(d, v_completo) || jsonb_build_object('completo', v_completo,
+        'liberadoEm', d.liberado_em,
+        'parecer', case when v_completo then d.parecer end,
         'historico', case when v_completo then (
             select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'titulo', x.titulo, 'criadoEm', x.criado_em,
                        'geral', rr.r -> 'geral', 'dimensoes', rr.r -> 'dimensoes') order by x.criado_em), '[]')
             from diagnosticos x cross join lateral (select _resultado_diagnostico(x, false) as r) rr
-            where x.empresa_id = d.empresa_id and x.modelo_id is not distinct from d.modelo_id and x.criado_em <= d.criado_em) end);
+            where x.empresa_id = d.empresa_id and x.modelo_id is not distinct from d.modelo_id and x.criado_em <= d.criado_em
+              and (v_equipe or x.liberado_em is not null)) end);
+end $$;
+
+-- O administrador avalia o resultado encerrado e libera para o gestor, com o parecer
+-- (o que fazer para subir a maturidade). Liberar de novo só atualiza o parecer.
+create or replace function public.liberar_resultado_diagnostico(p_id uuid, p_parecer text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_eu perfis := _exigir_equipe(); d diagnosticos;
+begin
+    select * into d from diagnosticos where id = p_id for update;
+    if d.id is null then perform _erro('nao-encontrado'); end if;
+    if _diagnostico_aberto(d) then perform _erro('validacao', '{"diagnostico":"aindaAberto"}'); end if;
+    update diagnosticos set liberado_em = coalesce(liberado_em, now()), liberado_por = coalesce(liberado_por, v_eu.id),
+                            parecer = _texto(p_parecer, 3000)
+    where id = d.id returning * into d;
+    perform _registrar('diagnostico.liberado', v_eu, d.empresa_id, d.titulo);
+    return to_jsonb(d) - 'questoes';
+end $$;
+
+-- Ação do plano de cultura: a equipe a qualquer momento; o gestor depois da liberação.
+create or replace function public._pode_gerir_acoes(p_eu public.perfis, d public.diagnosticos) returns boolean
+language sql stable as $$
+    select coalesce(p_eu.perfil in ('admin', 'consultant')
+        or (p_eu.perfil = 'company_admin' and p_eu.empresa_id = d.empresa_id and d.liberado_em is not null), false)
+$$;
+
+create or replace function public.salvar_acao_cultura(entrada jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+    v_eu perfis := _exigir_eu();
+    v_id uuid := nullif(entrada ->> 'id', '')::uuid;
+    v_status text := case when entrada ->> 'status' in ('pendente', 'andamento', 'concluida') then entrada ->> 'status' else 'pendente' end;
+    v_dim text := _texto(entrada ->> 'dimensao', 40);
+    a diagnosticos_acoes;
+    d diagnosticos;
+begin
+    if v_id is not null then
+        select * into a from diagnosticos_acoes where id = v_id for update;
+        if a.id is null then perform _erro('nao-encontrado'); end if;
+        select * into d from diagnosticos where id = a.diagnostico_id;
+    else
+        select * into d from diagnosticos where id = nullif(entrada ->> 'diagnosticoId', '')::uuid;
+    end if;
+    if d.id is null then perform _erro('nao-encontrado'); end if;
+    if not _pode_gerir_acoes(v_eu, d) then perform _erro('proibido'); end if;
+    if _texto(entrada ->> 'titulo', 300) = '' then perform _erro('validacao', '{"titulo":"obrigatorio"}'); end if;
+    if v_dim <> '' and not exists (select 1 from jsonb_array_elements(d.dimensoes) x where x ->> 'id' = v_dim) then v_dim := ''; end if;
+
+    if v_id is null then
+        insert into diagnosticos_acoes (diagnostico_id, empresa_id, dimensao, titulo, funcao, responsavel, prazo, status, criado_por, concluido_em)
+        values (d.id, d.empresa_id, v_dim, _texto(entrada ->> 'titulo', 300), _texto(entrada ->> 'funcao', 120),
+                _texto(entrada ->> 'responsavel', 120), nullif(entrada ->> 'prazo', '')::date, v_status, v_eu.id,
+                case when v_status = 'concluida' then now() end)
+        returning * into a;
+        perform _registrar('diagnostico.acao_criada', v_eu, d.empresa_id, a.titulo);
+    else
+        update diagnosticos_acoes set
+            dimensao = v_dim, titulo = _texto(entrada ->> 'titulo', 300), funcao = _texto(entrada ->> 'funcao', 120),
+            responsavel = _texto(entrada ->> 'responsavel', 120), prazo = nullif(entrada ->> 'prazo', '')::date,
+            status = v_status, atualizado_em = now(),
+            concluido_em = case when v_status = 'concluida' then coalesce(a.concluido_em, now()) end
+        where id = a.id returning * into a;
+        perform _registrar('diagnostico.acao_atualizada', v_eu, d.empresa_id, a.titulo);
+    end if;
+    return to_jsonb(a);
+end $$;
+
+create or replace function public.excluir_acao_cultura(p_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_eu perfis := _exigir_eu(); a diagnosticos_acoes; d diagnosticos;
+begin
+    select * into a from diagnosticos_acoes where id = p_id;
+    if a.id is null then perform _erro('nao-encontrado'); end if;
+    select * into d from diagnosticos where id = a.diagnostico_id;
+    if not _pode_gerir_acoes(v_eu, d) then perform _erro('proibido'); end if;
+    delete from diagnosticos_acoes where id = a.id;
+    perform _registrar('diagnostico.acao_excluida', v_eu, d.empresa_id, a.titulo);
 end $$;
 
 -- Panorama da consultoria: o diagnóstico mais recente de um modelo em cada empresa ativa
@@ -1623,7 +1798,11 @@ begin
                 coalesce((entrada ->> 'economia')::numeric, 0), coalesce((entrada ->> 'horas')::numeric, 0), v_prazo)
         returning * into k;
         perform _evento_kaizen(k.id, v_eu, 'criado', '');
-        if v_eu.empresa_id = v_empresa then ganhos := _somar_pontos(v_eu.id, 'kaizen_ideia', k.id::text, 10); end if;
+        -- A ideia do colaborador nasce pedindo a aprovação do gestor (o aviso aparece no menu dele).
+        -- Os pontos da ideia saem quando o gestor aprova (mover_kaizen).
+        if not _pode_aprovar_kaizen(v_eu, k) then
+            update kaizens set pedido_etapa = 'planejar' where id = k.id returning * into k;
+        end if;
         perform _registrar('kaizen.criado', v_eu, v_empresa, 'KZ-' || lpad(k.numero::text, 3, '0') || ' ' || k.titulo);
     else
         update kaizens set
@@ -1641,13 +1820,15 @@ begin
     return _kaizen_json(k) || jsonb_build_object('pontosGanhos', ganhos);
 end $$;
 
--- Mudança de etapa (PDCA). Concluir exige o resultado registrado e a aprovação do gestor
--- (ou da consultoria); aí todos os envolvidos ganham os pontos.
+-- Mudança de etapa (PDCA): só o gestor da empresa ou a consultoria (o colaborador gera a
+-- ideia e pede o avanço). Aprovar a ideia dá os pontos de ideia ao autor. Padronizar exige o
+-- resultado registrado; a premiação do kaizen vale uma vez por ano para cada pessoa.
 create or replace function public.mover_kaizen(p_id uuid, p_etapa text) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
     v_eu perfis := _exigir_eu();
     k kaizens;
+    v_antes text;
     v_pessoa uuid;
     ganhos int := 0;
     v_ganho int;
@@ -1655,28 +1836,67 @@ begin
     select * into k from kaizens where id = p_id for update;
     if k.id is null or not _pode_ver_kaizen(v_eu, k) then perform _erro('nao-encontrado'); end if;
     if p_etapa not in ('ideia', 'planejar', 'executar', 'verificar', 'concluido', 'arquivado') then perform _erro('validacao', '{"etapa":"etapa"}'); end if;
-    if not _pode_editar_kaizen(v_eu, k) then perform _erro('proibido'); end if;
+    if not _pode_aprovar_kaizen(v_eu, k) then perform _erro('validacao', '{"etapa":"aprovacaoGestor"}'); end if;
     if p_etapa = k.etapa then return _kaizen_json(k) || '{"pontosGanhos":0}'; end if;
-    if (p_etapa = 'concluido' or k.etapa = 'concluido') and not _pode_aprovar_kaizen(v_eu, k) then
-        perform _erro('validacao', '{"etapa":"aprovacaoGestor"}');
-    end if;
     if p_etapa = 'concluido' and _texto(k.resultado, 2000) = '' then perform _erro('validacao', '{"etapa":"semResultado"}'); end if;
 
-    update kaizens set etapa = p_etapa, atualizado_em = now(),
+    v_antes := k.etapa;
+    update kaizens set etapa = p_etapa, atualizado_em = now(), pedido_etapa = null,
                        concluido_em = case when p_etapa = 'concluido' then now() end
     where id = k.id returning * into k;
     perform _evento_kaizen(k.id, v_eu, 'etapa', p_etapa);
+    if v_antes = 'ideia' and p_etapa <> 'arquivado' and k.autor_id is not null
+       and exists (select 1 from perfis where id = k.autor_id and empresa_id = k.empresa_id) then
+        v_ganho := _somar_pontos(k.autor_id, 'kaizen_ideia', k.id::text, 10);
+        if k.autor_id = v_eu.id then ganhos := ganhos + v_ganho; end if;
+    end if;
     if p_etapa = 'concluido' then
         for v_pessoa in select distinct x from unnest(array[k.autor_id, k.responsavel_id] || k.membros) x
                         where x is not null and exists (select 1 from perfis where id = x and empresa_id = k.empresa_id) loop
-            v_ganho := _somar_pontos(v_pessoa, 'kaizen', k.id::text, 60);
-            if v_pessoa = v_eu.id then ganhos := v_ganho; end if;
+            v_ganho := _somar_pontos(v_pessoa, 'kaizen', 'ano-' || extract(year from now())::int, 60);
+            if v_pessoa = v_eu.id then ganhos := ganhos + v_ganho; end if;
         end loop;
         perform _registrar('kaizen.concluido', v_eu, k.empresa_id, 'KZ-' || lpad(k.numero::text, 3, '0') || ' ' || k.titulo);
     else
         perform _registrar('kaizen.etapa', v_eu, k.empresa_id, 'KZ-' || lpad(k.numero::text, 3, '0') || ' ' || k.titulo);
     end if;
     return _kaizen_json(k) || jsonb_build_object('pontosGanhos', ganhos);
+end $$;
+
+-- Quem participa do kaizen pede ao gestor o avanço para a próxima etapa do PDCA.
+create or replace function public.pedir_avanco_kaizen(p_id uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+    v_eu perfis := _exigir_eu();
+    k kaizens;
+    v_proxima text;
+begin
+    select * into k from kaizens where id = p_id for update;
+    if k.id is null or not _pode_ver_kaizen(v_eu, k) then perform _erro('nao-encontrado'); end if;
+    if not _pode_editar_kaizen(v_eu, k) then perform _erro('proibido'); end if;
+    v_proxima := case k.etapa when 'ideia' then 'planejar' when 'planejar' then 'executar'
+                              when 'executar' then 'verificar' when 'verificar' then 'concluido' end;
+    if v_proxima is null then perform _erro('validacao', '{"etapa":"etapa"}'); end if;
+    if v_proxima = 'concluido' and _texto(k.resultado, 2000) = '' then perform _erro('validacao', '{"etapa":"semResultado"}'); end if;
+    update kaizens set pedido_etapa = v_proxima, atualizado_em = now() where id = k.id returning * into k;
+    perform _evento_kaizen(k.id, v_eu, 'pedido', v_proxima);
+    perform _registrar('kaizen.pedido', v_eu, k.empresa_id, 'KZ-' || lpad(k.numero::text, 3, '0') || ' ' || k.titulo);
+    return _kaizen_json(k);
+end $$;
+
+-- O gestor não aprova o avanço: o pedido sai e o motivo fica no histórico.
+create or replace function public.recusar_pedido_kaizen(p_id uuid, p_motivo text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v_eu perfis := _exigir_eu(); k kaizens;
+begin
+    select * into k from kaizens where id = p_id for update;
+    if k.id is null or not _pode_ver_kaizen(v_eu, k) then perform _erro('nao-encontrado'); end if;
+    if not _pode_aprovar_kaizen(v_eu, k) then perform _erro('proibido'); end if;
+    if k.pedido_etapa is null then return _kaizen_json(k); end if;
+    update kaizens set pedido_etapa = null, atualizado_em = now() where id = k.id returning * into k;
+    perform _evento_kaizen(k.id, v_eu, 'recusa', _texto(p_motivo, 1000));
+    perform _registrar('kaizen.recusado', v_eu, k.empresa_id, 'KZ-' || lpad(k.numero::text, 3, '0') || ' ' || k.titulo);
+    return _kaizen_json(k);
 end $$;
 
 create or replace function public.comentar_kaizen(p_id uuid, p_texto text) returns void
@@ -1710,154 +1930,64 @@ end $$;
 
 insert into public.diagnosticos_modelos (id, titulo, descricao, norma, interpretacao, niveis, dimensoes, questoes, padrao) values
 (
-    'a0000000-0000-4000-8000-000000000001',
-    'Maturidade da gestão e da cultura',
-    'Autoavaliação de maturidade em 5 níveis inspirada na ISO 9004, organizada pelos 7 princípios da gestão da qualidade. Mostra onde a cultura apoia a estratégia e onde trava.',
-    'ABNT NBR ISO 9001:2015 · ISO 9004:2018 (autoavaliação de maturidade) · 7 princípios da gestão da qualidade (ISO 9000:2015)',
+    'a0000000-0000-4000-8000-000000000011',
+    'Cultura de qualidade e segurança de alimentos',
+    'Mede a cultura de qualidade e segurança de alimentos nas 5 dimensões propostas pela GFSI: o quanto cada pessoa entende, valoriza e pratica a segurança do alimento no dia a dia. Atende à exigência de medir a cultura da FSSC 22000, da BRCGS e da IFS.',
+    'GFSI – A Culture of Food Safety (2018) · ABNT NBR ISO 22000:2019 · FSSC 22000 (cultura de segurança de alimentos e qualidade) · BRCGS Food Safety · IFS Food · Codex CXC 1-1969 (rev. 2020)',
     'maturidade', '[]',
     $j$[
-      {"id":"cliente","nome":"Foco no cliente","descricao":"Entender e atender as necessidades de quem recebe o nosso trabalho.","recomendacao":"Levar a voz do cliente (reclamações, pesquisas e indicadores de satisfação) para as reuniões de rotina e capacitar a linha de frente em atendimento e tratamento de reclamações.","cursos":[]},
-      {"id":"lideranca","nome":"Liderança","descricao":"Direção clara, coerência e exemplo de quem lidera.","recomendacao":"Desdobrar os objetivos em metas por equipe, criar rituais curtos de comunicação da liderança e trabalhar a coerência entre discurso e prática num programa de desenvolvimento de líderes.","cursos":[]},
-      {"id":"pessoas","nome":"Engajamento das pessoas","descricao":"Autonomia, reconhecimento e desenvolvimento.","recomendacao":"Estruturar trilhas de capacitação por função, criar um ritual de reconhecimento e ampliar a autonomia com limites claros de decisão.","cursos":[]},
-      {"id":"processos","nome":"Abordagem de processo","descricao":"Trabalho padronizado e integrado entre áreas.","recomendacao":"Mapear os processos críticos (SIPOC), padronizar o trabalho com procedimentos visuais e definir donos de processo com indicadores.","cursos":[]},
-      {"id":"melhoria","nome":"Melhoria contínua","descricao":"Aprender com erros e melhorar todo dia.","recomendacao":"Implantar um programa de Kaizen com ciclo PDCA, análise de causa raiz (5 porquês e Ishikawa) e celebração dos ganhos.","cursos":[]},
-      {"id":"evidencias","nome":"Decisões baseadas em evidências","descricao":"Dados e fatos orientando as decisões.","recomendacao":"Definir poucos indicadores-chave por área, criar quadros de gestão à vista e uma rotina curta de análise dos resultados.","cursos":[]},
-      {"id":"relacionamentos","nome":"Gestão de relacionamentos","descricao":"Colaboração entre áreas, fornecedores e parceiros.","recomendacao":"Criar fóruns entre áreas, acordos internos de nível de serviço e avaliação conjunta com os fornecedores-chave.","cursos":[]}
+      {"id":"visao","nome":"Visão e missão","descricao":"A segurança do alimento como compromisso declarado e praticado pela empresa.","recomendacao":"Revisar a política de segurança de alimentos em linguagem simples, desdobrá-la em objetivos por área e fazer a liderança falar dela nas reuniões de rotina, deixando claro que segurança não se negocia por produção ou custo.","cursos":[]},
+      {"id":"pessoas","nome":"Pessoas","descricao":"Treinamento, responsabilidade e reconhecimento.","recomendacao":"Montar trilhas de capacitação por função (BPF, alergênicos, PCC), verificar a eficácia do treinamento na prática, reconhecer quem aponta riscos e incluir a segurança de alimentos nas metas de cada área.","cursos":[]},
+      {"id":"consistencia","nome":"Consistência","descricao":"Fazer certo sempre, inclusive quando ninguém está olhando.","recomendacao":"Reduzir a distância entre o procedimento escrito e a prática: revisar os POPs com quem executa, fazer verificações cruzadas por turno e tratar desvios recorrentes como falha do sistema, com análise de causa raiz.","cursos":[]},
+      {"id":"adaptabilidade","nome":"Adaptabilidade","descricao":"Responder a mudanças, falhas e novos riscos.","recomendacao":"Formalizar a gestão de mudanças (novo produto, equipamento, fornecedor ou embalagem passa pela equipe de segurança de alimentos), simular recolhimentos periodicamente e transformar cada reclamação ou desvio em aprendizado compartilhado.","cursos":[]},
+      {"id":"perigos","nome":"Consciência de perigos e riscos","descricao":"Conhecer os perigos físicos, químicos, biológicos e alergênicos.","recomendacao":"Levar o APPCC para o chão de fábrica: mostrar os perigos e PCCs de cada etapa com gestão visual, explicar o porquê de cada controle e fazer diálogos curtos de segurança de alimentos no início do turno.","cursos":[]}
     ]$j$,
     $j$[
-      {"id":"cli1","dimensao":"cliente","texto":"Sabemos com clareza o que os nossos clientes esperam do nosso trabalho."},
-      {"id":"cli2","dimensao":"cliente","texto":"As reclamações e sugestões dos clientes chegam até a minha equipe e geram ações."},
-      {"id":"cli3","dimensao":"cliente","texto":"Medimos a satisfação dos clientes e usamos o resultado para melhorar."},
-      {"id":"lid1","dimensao":"lideranca","texto":"A liderança comunica com clareza para onde a empresa está indo."},
-      {"id":"lid2","dimensao":"lideranca","texto":"Os líderes agem de acordo com o que falam."},
-      {"id":"lid3","dimensao":"lideranca","texto":"Sei como o meu trabalho contribui para os objetivos da empresa."},
-      {"id":"pes1","dimensao":"pessoas","texto":"Tenho autonomia e recursos para fazer bem o meu trabalho."},
-      {"id":"pes2","dimensao":"pessoas","texto":"As pessoas são reconhecidas pelas suas contribuições."},
-      {"id":"pes3","dimensao":"pessoas","texto":"Recebo o treinamento de que preciso para desempenhar a minha função."},
-      {"id":"pro1","dimensao":"processos","texto":"As atividades da minha área seguem um padrão conhecido por todos."},
-      {"id":"pro2","dimensao":"processos","texto":"Sei quem são os fornecedores e os clientes internos do meu trabalho."},
-      {"id":"pro3","dimensao":"processos","texto":"Quando um processo muda, as áreas envolvidas são avisadas a tempo."},
-      {"id":"mel1","dimensao":"melhoria","texto":"Aqui é normal sugerir melhorias, e elas são levadas a sério."},
-      {"id":"mel2","dimensao":"melhoria","texto":"Quando ocorre um erro, buscamos a causa em vez de culpados."},
-      {"id":"mel3","dimensao":"melhoria","texto":"Temos tempo e espaço para implantar melhorias no dia a dia."},
-      {"id":"evi1","dimensao":"evidencias","texto":"As decisões importantes se apoiam em dados e fatos."},
-      {"id":"evi2","dimensao":"evidencias","texto":"Os indicadores da minha área são acompanhados com regularidade."},
-      {"id":"evi3","dimensao":"evidencias","texto":"Tenho acesso às informações de que preciso para decidir bem."},
-      {"id":"rel1","dimensao":"relacionamentos","texto":"As áreas colaboram entre si para resolver problemas."},
-      {"id":"rel2","dimensao":"relacionamentos","texto":"A empresa mantém uma boa relação com fornecedores e parceiros."},
-      {"id":"rel3","dimensao":"relacionamentos","texto":"Há respeito e confiança entre pessoas de diferentes níveis."}
-    ]$j$,
-    true
-),
-(
-    'a0000000-0000-4000-8000-000000000002',
-    'Riscos psicossociais no trabalho',
-    'Levantamento da percepção das pessoas sobre os fatores de risco psicossocial, para apoiar a identificação de perigos e a avaliação de riscos do GRO/PGR. Não substitui a análise técnica do responsável pelo PGR.',
-    'NR-1 (GRO/PGR, atualizada pela Portaria MTE nº 1.419/2024) · ABNT NBR ISO 45003:2021 · ABNT NBR ISO 45001:2018',
-    'risco', '[]',
-    $j$[
-      {"id":"demandas","nome":"Demandas e ritmo de trabalho","descricao":"Carga, prazos e pressão.","recomendacao":"Revisar a distribuição da carga e as metas com a equipe, mapear os picos de demanda e combinar prioridades. Registrar no PGR as medidas de controle adotadas.","cursos":[]},
-      {"id":"autonomia","nome":"Autonomia e controle","descricao":"Voz sobre como o trabalho é feito.","recomendacao":"Envolver as pessoas no planejamento das tarefas, permitir pausas e consultar a equipe antes de mudanças que a afetam.","cursos":[]},
-      {"id":"apoio","nome":"Apoio da liderança e dos colegas","descricao":"Suporte e retorno no dia a dia.","recomendacao":"Capacitar as lideranças em feedback e escuta ativa e criar momentos regulares de conversa individual (1:1).","cursos":[]},
-      {"id":"relacoes","nome":"Relações e respeito","descricao":"Ausência de assédio e de conflitos destrutivos.","recomendacao":"Divulgar e fortalecer o canal de denúncias (Lei 14.457/2022), treinar as lideranças na prevenção ao assédio e tratar os casos com confidencialidade e sem retaliação.","cursos":[]},
-      {"id":"papel","nome":"Clareza de papel","descricao":"Saber o que é esperado de cada um.","recomendacao":"Revisar descrições de função, alinhar responsabilidades entre líderes e eliminar orientações contraditórias.","cursos":[]},
-      {"id":"reconhecimento","nome":"Reconhecimento e justiça","descricao":"Valorização e decisões transparentes.","recomendacao":"Tornar transparentes os critérios de promoção, escalas e benefícios e criar formas frequentes de reconhecimento.","cursos":[]},
-      {"id":"equilibrio","nome":"Equilíbrio e mudanças","descricao":"Desconexão, desgaste e gestão de mudanças.","recomendacao":"Combinar regras de desconexão fora do horário, comunicar mudanças com antecedência e oferecer apoio psicológico quando houver sinais de esgotamento.","cursos":[]}
-    ]$j$,
-    $j$[
-      {"id":"dem1","dimensao":"demandas","texto":"Consigo concluir o meu trabalho dentro da jornada normal."},
-      {"id":"dem2","dimensao":"demandas","texto":"Com frequência preciso trabalhar em ritmo acelerado ou sob pressão excessiva.","invertida":true},
-      {"id":"dem3","dimensao":"demandas","texto":"As metas da minha função são possíveis de alcançar."},
-      {"id":"aut1","dimensao":"autonomia","texto":"Tenho voz sobre como organizar as minhas tarefas."},
-      {"id":"aut2","dimensao":"autonomia","texto":"Posso fazer pausas quando preciso."},
-      {"id":"aut3","dimensao":"autonomia","texto":"Sou consultado quando mudanças afetam o meu trabalho."},
-      {"id":"apo1","dimensao":"apoio","texto":"Posso contar com o meu gestor quando enfrento dificuldades."},
-      {"id":"apo2","dimensao":"apoio","texto":"Recebo retorno sobre o meu trabalho de forma respeitosa."},
-      {"id":"apo3","dimensao":"apoio","texto":"Os colegas se ajudam quando alguém está sobrecarregado."},
-      {"id":"rlc1","dimensao":"relacoes","texto":"Já presenciei ou sofri humilhações, gritos ou constrangimentos no trabalho.","invertida":true},
-      {"id":"rlc2","dimensao":"relacoes","texto":"Sinto segurança para relatar assédio ou conduta inadequada sem sofrer retaliação."},
-      {"id":"rlc3","dimensao":"relacoes","texto":"As pessoas são tratadas com respeito, independentemente de cargo, gênero, idade ou origem."},
-      {"id":"pap1","dimensao":"papel","texto":"Sei exatamente o que é esperado de mim."},
-      {"id":"pap2","dimensao":"papel","texto":"Recebo orientações contraditórias de pessoas diferentes.","invertida":true},
-      {"id":"pap3","dimensao":"papel","texto":"Tenho as informações necessárias para fazer o meu trabalho."},
-      {"id":"rec1","dimensao":"reconhecimento","texto":"O meu esforço é reconhecido."},
-      {"id":"rec2","dimensao":"reconhecimento","texto":"As decisões sobre promoções, escalas e benefícios são justas e transparentes."},
-      {"id":"rec3","dimensao":"reconhecimento","texto":"Sinto que o meu trabalho tem valor para a empresa."},
-      {"id":"equ1","dimensao":"equilibrio","texto":"Consigo me desconectar do trabalho fora do horário."},
-      {"id":"equ2","dimensao":"equilibrio","texto":"As mudanças na empresa são comunicadas com antecedência e clareza."},
-      {"id":"equ3","dimensao":"equilibrio","texto":"Termino o dia de trabalho emocionalmente esgotado.","invertida":true}
-    ]$j$,
-    true
-),
-(
-    'a0000000-0000-4000-8000-000000000003',
-    'Cultura de segurança',
-    'Mede em que degrau da escada de maturidade de Hudson a cultura de segurança está, da reação a acidentes até a segurança como parte do jeito de trabalhar.',
-    'ABNT NBR ISO 45001:2018 (liderança, participação e consulta dos trabalhadores) · escada de maturidade de Hudson · NR-1 e NR-5 (CIPA)',
-    'maturidade', '["Patológico","Reativo","Calculista","Proativo","Generativo"]',
-    $j$[
-      {"id":"compromisso","nome":"Liderança e compromisso","descricao":"A segurança como prioridade real da liderança.","recomendacao":"Incluir a segurança na pauta das reuniões de liderança, fazer caminhadas de segurança (gemba) com os líderes e garantir os recursos antes de cobrar resultados.","cursos":[]},
-      {"id":"participacao","nome":"Participação e consulta","descricao":"Os trabalhadores ajudando a decidir.","recomendacao":"Envolver os trabalhadores na revisão de procedimentos, fortalecer a CIPA e formalizar o direito de recusa diante de risco grave.","cursos":[]},
-      {"id":"comunicacao","nome":"Reporte e comunicação","descricao":"Relatar sem medo e receber retorno.","recomendacao":"Simplificar o reporte de quase-acidentes, dar retorno a cada relato e comunicar as regras de forma visual e objetiva.","cursos":[]},
-      {"id":"aprendizado","nome":"Aprendizado com incidentes","descricao":"Entender causas em vez de punir.","recomendacao":"Adotar análise de causa raiz sem busca de culpados, compartilhar as lições aprendidas entre áreas e acompanhar as ações até o fim.","cursos":[]},
-      {"id":"riscos","nome":"Gestão de riscos no dia a dia","descricao":"Conhecer e controlar os riscos da tarefa.","recomendacao":"Revisar a análise de riscos das tarefas críticas, fazer diálogos diários de segurança e manter o 5S nas áreas de trabalho.","cursos":[]}
-    ]$j$,
-    $j$[
-      {"id":"com1","dimensao":"compromisso","texto":"A liderança dá prioridade à segurança mesmo quando há pressão por produção."},
-      {"id":"com2","dimensao":"compromisso","texto":"Os líderes participam das inspeções e das conversas de segurança."},
-      {"id":"com3","dimensao":"compromisso","texto":"Os recursos para trabalhar com segurança (EPI, ferramentas, tempo) estão disponíveis."},
-      {"id":"par1","dimensao":"participacao","texto":"Os trabalhadores são consultados na definição dos procedimentos de segurança."},
-      {"id":"par2","dimensao":"participacao","texto":"Posso interromper uma tarefa que considero insegura sem ser punido."},
-      {"id":"par3","dimensao":"participacao","texto":"A CIPA (ou equivalente) é atuante e conhecida por todos."},
-      {"id":"cmn1","dimensao":"comunicacao","texto":"Quase-acidentes e condições inseguras são relatados com naturalidade."},
-      {"id":"cmn2","dimensao":"comunicacao","texto":"Recebo retorno sobre as ocorrências que relato."},
-      {"id":"cmn3","dimensao":"comunicacao","texto":"As regras de segurança são explicadas de forma clara."},
-      {"id":"apr1","dimensao":"aprendizado","texto":"Depois de um incidente, o foco é entender as causas, e não punir."},
-      {"id":"apr2","dimensao":"aprendizado","texto":"As lições dos incidentes são compartilhadas com outras áreas."},
-      {"id":"apr3","dimensao":"aprendizado","texto":"Vejo mudanças concretas depois que um problema de segurança é apontado."},
-      {"id":"ris1","dimensao":"riscos","texto":"Conheço os riscos das minhas atividades e como me proteger."},
-      {"id":"ris2","dimensao":"riscos","texto":"Às vezes é preciso pular etapas de segurança para cumprir o prazo.","invertida":true},
-      {"id":"ris3","dimensao":"riscos","texto":"As áreas de trabalho são mantidas organizadas e seguras."}
-    ]$j$,
-    true
-),
-(
-    'a0000000-0000-4000-8000-000000000004',
-    'Cultura Lean e melhoria contínua',
-    'Avalia o quanto os comportamentos do dia a dia sustentam a melhoria contínua, a partir dos princípios orientadores do Modelo Shingo.',
-    'Modelo Shingo (princípios orientadores) · Lean / Kaizen · ciclo PDCA e melhoria contínua (ABNT NBR ISO 9001:2015, seção 10)',
-    'maturidade', '[]',
-    $j$[
-      {"id":"respeito","nome":"Respeito pelas pessoas","descricao":"Ouvir, desenvolver e não culpar.","recomendacao":"Criar canais para as ideias da equipe, investir no desenvolvimento e tratar os problemas como falhas do sistema, não das pessoas.","cursos":[]},
-      {"id":"humildade","nome":"Liderança com humildade","descricao":"Líderes que vão ao gemba e perguntam.","recomendacao":"Instituir caminhadas no gemba com roteiro de perguntas e capacitar os líderes como facilitadores (coaching kata).","cursos":[]},
-      {"id":"perfeicao","nome":"Busca da perfeição","descricao":"Melhorar sempre, eliminando desperdícios.","recomendacao":"Lançar um programa de Kaizen com metas de ideias por equipe e treinar a identificação dos 8 desperdícios.","cursos":[]},
-      {"id":"cientifico","nome":"Pensamento científico","descricao":"Testar, medir e aprender.","recomendacao":"Padronizar o PDCA/A3 para resolver problemas, testar em pequena escala e medir o efeito de cada melhoria.","cursos":[]},
-      {"id":"processo","nome":"Foco no processo e qualidade na fonte","descricao":"Corrigir na origem e manter padrões vivos.","recomendacao":"Implantar trabalho padrão visual, 5S auditado e o hábito de parar para corrigir a causa na origem (jidoka).","cursos":[]},
-      {"id":"valor","nome":"Valor para o cliente","descricao":"Fazer só o que o cliente valoriza.","recomendacao":"Mapear o fluxo de valor dos processos principais e eliminar as etapas que não agregam valor ao cliente.","cursos":[]}
-    ]$j$,
-    $j$[
-      {"id":"rsp1","dimensao":"respeito","texto":"As minhas ideias são ouvidas, mesmo quando contrariam a opinião da chefia."},
-      {"id":"rsp2","dimensao":"respeito","texto":"A empresa investe no desenvolvimento das pessoas."},
-      {"id":"rsp3","dimensao":"respeito","texto":"Os problemas são tratados sem culpar indivíduos."},
-      {"id":"hum1","dimensao":"humildade","texto":"Os líderes vão aonde o trabalho acontece para entender os problemas."},
-      {"id":"hum2","dimensao":"humildade","texto":"Os líderes admitem quando não sabem algo e pedem ajuda à equipe."},
-      {"id":"hum3","dimensao":"humildade","texto":"A liderança pergunta mais do que dá ordens."},
-      {"id":"per1","dimensao":"perfeicao","texto":"Mesmo quando as coisas vão bem, buscamos fazer melhor."},
-      {"id":"per2","dimensao":"perfeicao","texto":"Pequenas melhorias são feitas toda semana na minha área."},
-      {"id":"per3","dimensao":"perfeicao","texto":"Desperdícios (espera, retrabalho, excesso) são identificados e eliminados."},
-      {"id":"cie1","dimensao":"cientifico","texto":"Testamos as ideias em pequena escala antes de adotá-las."},
-      {"id":"cie2","dimensao":"cientifico","texto":"Usamos métodos como PDCA ou 5 porquês para resolver problemas."},
-      {"id":"cie3","dimensao":"cientifico","texto":"Medimos o resultado das melhorias implantadas."},
-      {"id":"prc1","dimensao":"processo","texto":"Quando há um defeito, paramos para corrigir a causa na origem."},
-      {"id":"prc2","dimensao":"processo","texto":"Os padrões de trabalho estão visíveis e atualizados."},
-      {"id":"prc3","dimensao":"processo","texto":"A organização do posto de trabalho (5S) é mantida no dia a dia."},
-      {"id":"val1","dimensao":"valor","texto":"Sabemos o que gera valor para o cliente final."},
-      {"id":"val2","dimensao":"valor","texto":"Eliminamos etapas que não agregam valor ao cliente."},
-      {"id":"val3","dimensao":"valor","texto":"O cliente é considerado nas decisões de melhoria."}
+      {"id":"vis1","dimensao":"visao","texto":"Sei qual é o compromisso da empresa com a segurança do alimento que produzimos."},
+      {"id":"vis2","dimensao":"visao","texto":"A liderança fala de segurança de alimentos com a mesma importância que fala de produção e custo."},
+      {"id":"vis3","dimensao":"visao","texto":"Quando há conflito entre prazo e segurança do alimento, a segurança vence."},
+      {"id":"vis4","dimensao":"visao","texto":"Já vi produto ser liberado com uma dúvida de segurança do alimento sem resolver.","invertida":true},
+      {"id":"pes1","dimensao":"pessoas","texto":"Recebi treinamento suficiente para saber como o meu trabalho afeta a segurança do alimento."},
+      {"id":"pes2","dimensao":"pessoas","texto":"Sei o que fazer se eu perceber um risco para o produto."},
+      {"id":"pes3","dimensao":"pessoas","texto":"Quem aponta um problema de segurança do alimento é reconhecido, e não criticado."},
+      {"id":"pes4","dimensao":"pessoas","texto":"Novos funcionários, temporários e terceiros aprendem as regras de higiene antes de entrar na área produtiva."},
+      {"id":"con1","dimensao":"consistencia","texto":"As regras de higiene são seguidas da mesma forma em todos os turnos."},
+      {"id":"con2","dimensao":"consistencia","texto":"Os registros de monitoramento são preenchidos no momento em que a atividade é feita."},
+      {"id":"con3","dimensao":"consistencia","texto":"As regras são cumpridas da mesma forma em dia de auditoria e em dia normal."},
+      {"id":"con4","dimensao":"consistencia","texto":"Às vezes os registros são preenchidos depois, de memória, só para fechar o papel.","invertida":true},
+      {"id":"ada1","dimensao":"adaptabilidade","texto":"Quando muda um produto, equipamento, fornecedor ou embalagem, os riscos para o alimento são avaliados antes."},
+      {"id":"ada2","dimensao":"adaptabilidade","texto":"Depois de uma reclamação ou desvio, as causas são analisadas e algo muda de verdade."},
+      {"id":"ada3","dimensao":"adaptabilidade","texto":"Sei como agir num recolhimento (recall) ou numa crise de segurança do alimento."},
+      {"id":"ada4","dimensao":"adaptabilidade","texto":"Temos abertura para sugerir melhorias nos controles de segurança do alimento."},
+      {"id":"per1","dimensao":"perigos","texto":"Conheço os perigos (físicos, químicos, biológicos e alergênicos) da etapa em que trabalho."},
+      {"id":"per2","dimensao":"perigos","texto":"Sei quais são os pontos críticos de controle (PCC) da minha área e por que existem."},
+      {"id":"per3","dimensao":"perigos","texto":"Entendo o que pode acontecer com o consumidor se um controle falhar."},
+      {"id":"per4","dimensao":"perigos","texto":"Os alergênicos são identificados e separados de forma clara em todas as etapas."}
     ]$j$,
     true
 )
 on conflict (id) do nothing;
+
+-- Nome novo do modelo padrão (só se a consultoria ainda não o renomeou).
+update public.diagnosticos_modelos
+   set titulo = 'Cultura de qualidade e segurança de alimentos',
+       descricao = replace(descricao, 'Mede a cultura de segurança de alimentos', 'Mede a cultura de qualidade e segurança de alimentos')
+ where id = 'a0000000-0000-4000-8000-000000000011' and titulo = 'Cultura de segurança de alimentos';
+
+-- A plataforma fica só com o diagnóstico de cultura de qualidade e segurança de alimentos.
+-- Os demais modelos padrão das versões anteriores (gestão ISO 9001, segurança do trabalho,
+-- Lean, embalagens, BPF/APPCC e riscos psicossociais) saem se nunca foram aplicados; se já foram,
+-- ficam guardados e despublicados, para o histórico. Só mexe nos que ainda estão como
+-- padrão: rodar o arquivo de novo não desfaz uma republicação feita pela consultoria.
+delete from public.diagnosticos_modelos m
+ where m.padrao and m.id in ('a0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000004',
+                  'a0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000012', 'a0000000-0000-4000-8000-000000000013',
+                  'a0000000-0000-4000-8000-000000000014')
+   and not exists (select 1 from public.diagnosticos x where x.modelo_id = m.id);
+update public.diagnosticos_modelos set padrao = false, publicado = false
+ where padrao and id in ('a0000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000004',
+                  'a0000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000012', 'a0000000-0000-4000-8000-000000000013',
+                  'a0000000-0000-4000-8000-000000000014');
 
 -- ----------------------------------------------------------- permissões --
 
@@ -1887,7 +2017,9 @@ grant execute on function
     public.reabrir_diagnostico(uuid, date), public.excluir_diagnostico(uuid), public.responder_diagnostico(uuid, jsonb, int, text),
     public.resultado_diagnostico(uuid), public.listar_diagnosticos(uuid), public.panorama_maturidade(uuid), public.panorama_empresas(),
     public.listar_kaizens(uuid), public.obter_kaizen(uuid), public.colegas(uuid), public.salvar_kaizen(jsonb),
-    public.mover_kaizen(uuid, text), public.comentar_kaizen(uuid, text), public.parecer_kaizen(uuid, text, boolean)
+    public.mover_kaizen(uuid, text), public.comentar_kaizen(uuid, text), public.parecer_kaizen(uuid, text, boolean),
+    public.pedir_avanco_kaizen(uuid), public.recusar_pedido_kaizen(uuid, text),
+    public.liberar_resultado_diagnostico(uuid, text), public.salvar_acao_cultura(jsonb), public.excluir_acao_cultura(uuid)
 to authenticated;
 
 -- =============================================================================

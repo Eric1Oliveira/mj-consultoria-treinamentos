@@ -34,25 +34,38 @@ funções e políticas e não apaga dados (os modelos de diagnóstico padrão s�
 ainda não existirem, preservando as edições da consultoria). **Rode o SQL antes de
 publicar uma versão nova do site**: o site novo usa funções que só existem depois dele.
 
+### Limite do plano
+
+O plano contratado permite até **3 empresas ativas** (usuários ilimitados). O banco
+recusa cadastrar ou reativar uma empresa além do limite; empresas inativas não contam.
+A tela de Empresas mostra o uso do plano e, no limite, o contato no WhatsApp para
+atualizar. Para mudar o limite, no SQL Editor:
+`update public.plano set limite_empresas = 5;`
+
 ## Módulos
 
 - **Cursos**: catálogo, aulas (vídeo/texto), avaliação corrigida no servidor, certificado
   com código verificável publicamente em `#/validar`. Atribuição em lote com prazo; prazo
   vencido conta como atraso nos relatórios. Cursos podem ser duplicados e reordenados.
-- **Cultura e maturidade** (`#/cultura`): diagnósticos anônimos a partir de modelos
-  baseados em normas — maturidade da gestão (ISO 9001/9004), riscos psicossociais
-  (NR-1/ISO 45003), cultura de segurança (ISO 45001/escada de Hudson) e cultura Lean
-  (Modelo Shingo). A consultoria edita e cria modelos; a empresa pode acrescentar
-  perguntas próprias. Resultado com nível por dimensão, visão liderança × equipe
-  (pontos cegos), favorabilidade por pergunta, eNPS, áreas, comentários, evolução e
-  plano de ação com cursos recomendados. A consultoria tem o panorama da carteira
-  (mapa de maturidade) e libera o curso indicado para a empresa num clique.
-  O levantamento psicossocial apoia o GRO/PGR, mas não substitui a análise técnica.
-- **Kaizen** (`#/kaizen`): melhorias no formato A3/PDCA, com quadro de arrastar,
-  5 porquês, ganhos em R$ e horas, histórico, parecer da consultoria e boas práticas.
-  Padronizar (concluir) exige o resultado registrado e a aprovação do gestor.
-- **Ranking** (`#/ranking`): semana, mês ou geral, pódio, a posição de cada um e a
-  média por área. Pontos também por kaizen e por responder diagnósticos.
+- **Cursos**: certificado com o logotipo da empresa contratante (ou o da MJ Alimentos Seguros,
+  escolhido no editor do curso). Cursos marcados como **DMQSA** (Diálogo Mensal de Qualidade e
+  Segurança de Alimentos) valem o desafio do mês.
+- **Cultura de Qualidade e Segurança de Alimentos** (`#/cultura`): um único modelo padrão (5 dimensões
+  da GFSI); a consultoria pode criar outros (ex.: clima organizacional) em *Modelos*. A coleta fica
+  aberta por no máximo **30 dias**. Depois de encerrada, o resultado fica só com o administrador, que
+  escreve o parecer e **libera** para o gestor; só então o gestor vê o relatório completo e o
+  **plano de ações** (ação, dimensão, aplicação por função, responsável, prazo e status, com
+  concluídas/em andamento/atrasadas). Reabrir a coleta é só da equipe e volta a esconder o resultado.
+  Nota de 0 a 100 = (média das respostas − 1) × 25, com as perguntas invertidas viradas; cada faixa
+  de 20 pontos é um nível: Inicial, Em desenvolvimento, Estruturado, Gerenciado e Referência.
+- **Kaizen** (`#/kaizen`): o colaborador registra a ideia e pede o avanço; só o gestor (ou a
+  consultoria) muda a etapa do PDCA, e recebe o aviso no menu a cada ideia nova ou pedido. A ideia
+  ganha pontos quando o gestor aprova; a premiação do kaizen padronizado vale uma vez por ano para
+  cada pessoa. A "dimensão da cultura" usa as 5 dimensões do diagnóstico.
+- **Ranking** (`#/ranking`): semana, mês ou geral, com o **desafio do mês** (ler/assistir o DMQSA mais
+  recente = 50 pontos).
+- **Divulgação**: `web/divulgacao.html` é a página para novos clientes, e `web/email-divulgacao.html`
+  o modelo de e-mail que aponta para ela.
 - **Busca rápida**: `Ctrl/⌘ + K` em qualquer tela.
 
 ### Anonimato dos diagnósticos
@@ -68,7 +81,7 @@ Contas novas entram só por convite: a pessoa abre o link, informa nome e cria a
 
 ## Perfis
 
-- **Administrador geral** e **consultora**: equipe da consultoria; cadastram empresas e cursos,
+- **Administrador geral**: equipe da consultoria (o perfil de consultora não recebe mais convites; as contas antigas continuam funcionando); cadastram empresas e cursos,
   mantêm os modelos de diagnóstico, acompanham o panorama de maturidade e a saúde de cada
   cliente, dão parecer nos kaizens e liberam cursos conforme o diagnóstico.
 - **Gerente da empresa**: atribui cursos (com prazo), lança diagnósticos de cultura, lê o

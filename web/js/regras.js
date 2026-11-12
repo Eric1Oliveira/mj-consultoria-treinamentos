@@ -75,6 +75,8 @@ export function pode(usuario, acao, alvo = {}) {
         case 'gerir-modelos':
         case 'ver-panorama':
         case 'liberar-curso':
+        case 'liberar-resultado':
+        case 'reabrir-diagnostico':
             return ehEquipe(perfil);
         case 'definir-area':
             return podeGerirPessoa(usuario, alvo.pessoa) || (perfil === 'company_admin' && alvo.pessoa?.id === usuario.id);
@@ -124,7 +126,7 @@ export function podeConvidar(usuario, perfil, empresa) {
 
     switch (usuario.perfil) {
         case 'admin':
-            return true;
+            return perfil !== 'consultant'; // o perfil de consultora saiu da plataforma
         case 'consultant':
             return ehDaEmpresa(perfil);
         case 'company_admin':
@@ -302,13 +304,15 @@ export function cursoCompleto(curso, matricula) {
 
 // ------------------------------------------------------------ gamificação --
 
-/** Pontos por ação (os mesmos do servidor). Cada ação vale uma única vez (reenviar não soma de novo). */
-export const PONTOS = { aula: 10, avaliacao: 30, notaMaxima: 20, curso: 50, desafio: 25, kaizenIdeia: 10, kaizen: 60, diagnostico: 15 };
+/**
+ * Pontos por ação (os mesmos do servidor). Cada ação vale uma única vez (reenviar não soma de novo).
+ * desafio = desafio do mês (ler/assistir o DMQSA); kaizenIdeia sai quando o gestor aprova a ideia;
+ * kaizen (padronizado) é premiado uma vez por ano para cada pessoa.
+ */
+export const PONTOS = { aula: 10, avaliacao: 30, notaMaxima: 20, curso: 50, desafio: 50, kaizenIdeia: 10, kaizen: 60, diagnostico: 15 };
 
 /** Pontos mínimos de cada nível (os nomes ficam em textos.js). */
 export const NIVEIS = [0, 100, 250, 500, 1000];
-
-export const DESAFIO_SEMANAL = { aulas: 3, dias: 7 };
 
 export function nivelPorPontos(pontos) {
     let nivel = 0;
@@ -332,6 +336,9 @@ export function sequenciaDias(datasIso, agora = new Date()) {
 }
 
 // --------------------------------------------------- cultura e maturidade --
+
+/** Coleta de um diagnóstico: aberta por no máximo 30 dias (o servidor confere). */
+export const DIAS_COLETA = 30;
 
 /**
  * Nível de maturidade (0 a 4) a partir da nota 0–100: faixas de 20 pontos,
@@ -372,7 +379,19 @@ export function codigoKaizen(numero) {
     return `KZ-${String(numero ?? 0).padStart(3, '0')}`;
 }
 
-/** Quem pode mexer no kaizen (o servidor confere de novo). Concluir fica com o gestor ou a consultoria. */
+/** Mudar a etapa (aprovar o avanço, voltar, arquivar) é só do gestor da empresa ou da consultoria. */
+export function podeAprovarKaizen(usuario, k) {
+    if (!usuario?.ativo || !k) return false;
+    return ehEquipe(usuario.perfil) || (usuario.perfil === 'company_admin' && usuario.empresaId === k.empresaId);
+}
+
+/** Próxima etapa do PDCA (null no fim ou fora do quadro). */
+export function proximaEtapaKaizen(etapa) {
+    const i = ETAPAS_KAIZEN.indexOf(etapa);
+    return i >= 0 && i < ETAPAS_KAIZEN.length - 1 ? ETAPAS_KAIZEN[i + 1] : null;
+}
+
+/** Quem pode editar o conteúdo do kaizen (o servidor confere de novo). Mudar de etapa: podeAprovarKaizen. */
 export function podeEditarKaizen(usuario, k) {
     if (!usuario?.ativo || !k) return false;
     if (ehEquipe(usuario.perfil)) return true;

@@ -38,9 +38,10 @@ export async function tela({ usuario, consulta }) {
     const equipe = ehEquipe(usuario.perfil);
     const periodo = PERIODOS.includes(consulta.get('periodo')) ? consulta.get('periodo') : 'mes';
     const empresaId = equipe ? consulta.get('empresa') ?? '' : '';
-    const [r, empresas] = await Promise.all([
+    const [r, empresas, desafio] = await Promise.all([
         dados.rankingEmpresa({ periodo, empresaId }),
         equipe ? dados.listarEmpresas(usuario, { situacao: 'ativas' }) : [],
+        equipe ? null : dados.perfilGamificacao().then((g) => g.desafio).catch(() => null),
     ]);
     const alguemPontuou = r.itens.some((x) => x.pontos > 0);
     const foraDoTop = r.voce && !r.itens.some((x) => x.voce) ? r.voce : null;
@@ -84,6 +85,17 @@ export async function tela({ usuario, consulta }) {
                     </section>
                 </div>
                 <div class="painel-coluna painel-coluna--lateral">
+                    ${equipe ? '' : html`<section class="painel-bloco desafio-mes" aria-labelledby="desafio-mes-titulo">
+                        <h2 id="desafio-mes-titulo" class="bloco-titulo">${icone('target', 'icone icone--p')}${t('gamificacao.desafio')}</h2>
+                        <p class="bloco-nota">${t('gamificacao.desafioTexto', { pontos: PONTOS.desafio })}</p>
+                        ${desafio ? html`
+                            <p class="desafio-mes-curso">${desafio.curso.titulo}</p>
+                            ${desafio.cumprido
+                                ? html`<p class="selo selo--sucesso">${icone('check', 'icone icone--p')}${t('gamificacao.desafioCumprido')}</p>`
+                                : html`<p class="bloco-nota">${t('gamificacao.desafioProgresso', { feito: desafio.feito, meta: desafio.meta })}</p>
+                                    <a class="botao botao--primario botao--p" href="#/cursos/${desafio.curso.id}">${t('gamificacao.desafioAbrir')}${icone('arrow', 'icone icone--p')}</a>`}`
+                            : html`<p class="nota">${t('gamificacao.desafioSem')}</p>`}
+                    </section>`}
                     ${r.voce ? html`<section class="painel-bloco ranking-voce" aria-labelledby="ranking-voce-titulo">
                         <h2 id="ranking-voce-titulo" class="bloco-titulo">${t('ranking.suaPosicao')}</h2>
                         <p class="ranking-voce-numero">${r.voce.pontos > 0 ? t('gamificacao.posicao', { n: r.voce.posicao }) : '—'}<span>${t('ranking.deN', { n: formatarNumero(r.participantes) })}</span></p>

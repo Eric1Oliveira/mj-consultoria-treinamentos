@@ -8,7 +8,7 @@
 import * as sb from './supabase.js';
 import {
     ehEquipe, podeEstudar, pode, filtrarVisiveis, convitePendente,
-    emailValido, gerarIdentificador, codigoYoutube, nivelPorPontos, sequenciaDias, marcaDe, DESAFIO_SEMANAL, indiceEngajamento,
+    emailValido, gerarIdentificador, codigoYoutube, nivelPorPontos, sequenciaDias, marcaDe, indiceEngajamento,
 } from './regras.js';
 
 const CHAVE_PREFERENCIAS = 'mjc:preferencias';
@@ -17,7 +17,7 @@ export const SENHA_MINIMA = 8;
 
 export class ErroDados extends Error {
     /**
-     * @param {string} codigo 'credenciais' | 'proibido' | 'nao-encontrado' | 'inativo' | 'validacao'
+     * @param {string} codigo 'credenciais' | 'proibido' | 'nao-encontrado' | 'inativo' | 'validacao' | 'limite-plano'
      * @param {Record<string, string>} campos   campo → chave de mensagem (em erros.campos.*)
      * @param {Record<string, string|number>} params valores para as mensagens
      */
@@ -31,15 +31,16 @@ export class ErroDados extends Error {
 
 // ----------------------------------------------------------------- acesso --
 
-const CODIGOS = new Set(['proibido', 'nao-encontrado', 'inativo', 'validacao', 'credenciais']);
+const CODIGOS = new Set(['proibido', 'nao-encontrado', 'inativo', 'validacao', 'credenciais', 'limite-plano']);
 
 /** Converte o erro do Supabase no ErroDados que as telas já sabem mostrar. */
 function converter(erro) {
     if (!(erro instanceof sb.ErroSupabase)) return erro;
     if (CODIGOS.has(erro.codigo)) {
-        let campos = {};
-        try { campos = erro.detalhe ? JSON.parse(erro.detalhe) : {}; } catch { /* sem campos */ }
-        return new ErroDados(erro.codigo, campos);
+        let detalhe = {};
+        try { detalhe = erro.detalhe ? JSON.parse(erro.detalhe) : {}; } catch { /* sem detalhe */ }
+        // Na validação o detalhe é campo → mensagem; nos outros erros, valores para a mensagem.
+        return erro.codigo === 'validacao' ? new ErroDados(erro.codigo, detalhe) : new ErroDados(erro.codigo, {}, detalhe);
     }
     if (erro.status === 401 || erro.status === 403) return new ErroDados('proibido');
     return erro;
@@ -308,6 +309,17 @@ export async function listarEmpresas(_usuario, { busca = '', situacao = 'todas',
         .filter((e) => !termo || e.nome.toLowerCase().includes(termo) || e.identificador.includes(termo))
         .filter((e) => situacao === 'todas' || (situacao === 'ativas' ? e.ativa : !e.ativa))
         .map((e) => ({ ...e, pessoasAtivas: pessoas.filter((p) => p.empresa_id === e.id).length }));
+}
+
+/** Plano contratado: quantas empresas ativas cabem e quantas já existem. */
+export async function usoDoPlano() {
+    exigir(pode(atual(), 'ver-empresas'));
+    const [planos, ativas] = await Promise.all([
+        ler('plano', 'select=limite_empresas'),
+        ler('empresas', 'select=id&ativa=eq.true'),
+    ]);
+    const limite = planos[0]?.limite_empresas ?? null;
+    return { limite, ativas: ativas.length, esgotado: limite !== null && ativas.length >= limite };
 }
 
 /** Logo: confere o conteúdo real do arquivo (assinatura dos bytes), não só o nome. */
@@ -618,7 +630,7 @@ export async function listarCursos(_usuario, { busca = '' } = {}) {
             const daTurma = matriculas.filter((m) => m.curso_id === c.id).map(camel);
             const minha = daTurma.find((m) => m.usuarioId === usuario.id);
             return {
-                id: c.id, titulo: c.titulo, descricao: c.descricao, cargaHoraria: c.cargaHoraria, ativo: c.ativo, empresas: c.empresas,
+                id: c.id, titulo: c.titulo, descricao: c.descricao, cargaHoraria: c.cargaHoraria, ativo: c.ativo, empresas: c.empresas, dmqsa: Boolean(c.dmqsa),
                 modulos: c.modulos.length, aulas: aulasDoCurso(c).length,
                 matriculados: daTurma.length, concluidos: daTurma.filter((m) => m.concluidoEm).length,
                 progresso: podeEstudar(usuario.perfil) ? progressoDe(c, minha) : null,
@@ -675,6 +687,8 @@ export async function salvarCurso(_usuario, entrada) {
             tentativas: numero(entrada.tentativas, 1, 10, 3),
             ativo: Boolean(entrada.ativo),
             avancoAutomatico: Boolean(entrada.avancoAutomatico),
+            certificadoMarca: entrada.certificadoMarca === 'mj' ? 'mj' : 'empresa',
+            dmqsa: Boolean(entrada.dmqsa),
             empresas: entrada.empresas ?? [],
             modulos,
             avaliacao: { questoes },
@@ -767,22 +781,24 @@ export async function obterCertificado(_usuario, certificadoId) {
     const [linha] = await ler('certificados', `select=*&id=eq.${valor(certificadoId)}`);
     exigir(linha, 'nao-encontrado');
     const c = camel(linha);
-    return { ...c, curso: c.cursoTitulo, empresa: c.empresaNome };
+    // Logotipo: o da empresa contratante (se ela tiver um); nos cursos marcados, o da MJ Alimentos Seguros.
+    const empresa = c.marca !== 'mj' && c.empresaId ? await obterEmpresa(c.empresaId).catch(() => null) : null;
+    return { ...c, curso: c.cursoTitulo, empresa: c.empresaNome, marca: c.marca ?? 'empresa', logo: empresa?.logo ?? null };
 }
 
 // ------------------------------------------------------------- gamificação --
 
 export async function perfilGamificacao() {
     const usuario = atual();
-    const [meus, minhasMatriculas] = await Promise.all([
+    const [meus, minhasMatriculas, dmqsa] = await Promise.all([
         ler('pontos', `select=tipo,ref,valor,em&usuario_id=eq.${valor(usuario.id)}`),
-        ler('matriculas', `select=aulas_concluidas,tentativas,concluido_em&usuario_id=eq.${valor(usuario.id)}`).then((l) => l.map(camel)),
+        ler('matriculas', `select=curso_id,aulas_concluidas,tentativas,concluido_em&usuario_id=eq.${valor(usuario.id)}`).then((l) => l.map(camel)),
+        desafioDoMes(),
     ]);
     const total = meus.reduce((soma, p) => soma + p.valor, 0);
     const aulas = minhasMatriculas.reduce((soma, m) => soma + m.aulasConcluidas.length, 0);
     const sequencia = sequenciaDias(meus.map((p) => p.em));
-    const limite = Date.now() - DESAFIO_SEMANAL.dias * 86_400_000;
-    const aulasSemana = meus.filter((p) => p.tipo === 'aula' && new Date(p.em).getTime() >= limite).length;
+    const feitasDmqsa = dmqsa ? minhasMatriculas.find((m) => m.cursoId === dmqsa.id)?.aulasConcluidas ?? [] : [];
     return {
         pontos: total,
         ...nivelPorPontos(total),
@@ -796,12 +812,23 @@ export async function perfilGamificacao() {
             voz_ativa: meus.some((p) => p.tipo === 'diagnostico'),
             melhoria_continua: meus.some((p) => p.tipo === 'kaizen'),
         },
-        desafio: {
-            meta: DESAFIO_SEMANAL.aulas,
-            feito: Math.min(aulasSemana, DESAFIO_SEMANAL.aulas),
-            cumprido: meus.some((p) => p.tipo === 'desafio' && p.ref === `semana-${Math.floor(Date.now() / (7 * 86_400_000))}`),
-        },
+        // Desafio do mês: ler/assistir todas as aulas do DMQSA mais recente liberado para a pessoa.
+        desafio: dmqsa ? {
+            curso: { id: dmqsa.id, titulo: dmqsa.titulo },
+            meta: dmqsa.aulas.length,
+            feito: dmqsa.aulas.filter((id) => feitasDmqsa.includes(id)).length,
+            cumprido: meus.some((p) => p.tipo === 'desafio' && p.ref === `dmqsa-${dmqsa.id}`),
+        } : null,
     };
+}
+
+/** O DMQSA (Diálogo Mensal de Qualidade e Segurança de Alimentos) mais recente que a pessoa pode fazer. */
+export async function desafioDoMes() {
+    const usuario = atual();
+    if (!podeEstudar(usuario.perfil)) return null;
+    const lista = await ler('cursos', 'select=id,titulo,ativo,empresas,modulos,criado_em&dmqsa=is.true&order=criado_em.desc&limit=5');
+    const c = lista.find((x) => x.ativo && x.empresas.includes(usuario.empresaId));
+    return c ? { id: c.id, titulo: c.titulo, aulas: c.modulos.flatMap((m) => m.aulas.map((a) => a.id)) } : null;
 }
 
 /**
@@ -1099,6 +1126,35 @@ export async function resultadoDiagnostico(id) {
     return camel(await rpc('resultado_diagnostico', { p_id: id }));
 }
 
+/** O administrador avalia o resultado encerrado e libera para o gestor, com o parecer. */
+export async function liberarResultado(id, parecer) {
+    exigir(pode(atual(), 'liberar-resultado'));
+    return camel(await rpc('liberar_resultado_diagnostico', { p_id: id, p_parecer: texto(parecer, 3000) }));
+}
+
+// Plano de ação da cultura (a equipe sempre; o gestor depois da liberação — o RLS decide).
+export async function listarAcoes(diagnosticoId) {
+    atual();
+    return (await ler('diagnosticos_acoes', `select=*&diagnostico_id=eq.${valor(diagnosticoId)}&order=prazo.asc.nullslast,criado_em`)).map(camel);
+}
+
+export async function salvarAcao(entrada) {
+    atual();
+    if (!texto(entrada.titulo, 300)) throw new ErroDados('validacao', { titulo: 'obrigatorio' });
+    return camel(await rpc('salvar_acao_cultura', {
+        entrada: {
+            id: entrada.id || null, diagnosticoId: entrada.diagnosticoId || null, titulo: texto(entrada.titulo, 300),
+            dimensao: entrada.dimensao ?? '', funcao: texto(entrada.funcao, 120), responsavel: texto(entrada.responsavel, 120),
+            prazo: entrada.prazo || null, status: entrada.status || 'pendente',
+        },
+    }));
+}
+
+export async function excluirAcao(id) {
+    atual();
+    await rpc('excluir_acao_cultura', { p_id: id });
+}
+
 /** Panorama da consultoria: o diagnóstico mais recente de um modelo em cada empresa. */
 export async function panoramaMaturidade(modeloId) {
     exigir(pode(atual(), 'ver-panorama'));
@@ -1184,6 +1240,17 @@ export async function moverKaizen(id, etapa) {
     return kaizenParaTela(await rpc('mover_kaizen', { p_id: id, p_etapa: etapa }));
 }
 
+/** Quem participa pede ao gestor o avanço para a próxima etapa. */
+export async function pedirAvancoKaizen(id) {
+    atual();
+    return kaizenParaTela(await rpc('pedir_avanco_kaizen', { p_id: id }));
+}
+
+export async function recusarPedidoKaizen(id, motivo) {
+    atual();
+    return kaizenParaTela(await rpc('recusar_pedido_kaizen', { p_id: id, p_motivo: texto(motivo, 1000) }));
+}
+
 export async function comentarKaizen(id, textoComentario) {
     atual();
     if (!texto(textoComentario, 1000)) throw new ErroDados('validacao', { texto: 'obrigatorio' });
@@ -1207,9 +1274,13 @@ export async function contadoresMenu() {
             if (!ehEquipe(usuario.perfil) && (await obterEmpresa(usuario.empresaId))?.aprovador !== 'empresa') return 0;
             return (await ler('solicitacoes', 'select=id&situacao=eq.pendente')).length;
         })().catch(zero),
-        diagnosticosPendentes().then((l) => l.length).catch(zero),
+        // Equipe: diagnósticos encerrados esperando a avaliação e a liberação. Empresa: os que ela pode responder.
+        (ehEquipe(usuario.perfil)
+            ? listarDiagnosticos().then((l) => l.filter((d) => !d.aberto && !d.liberado && d.respondentes > 0).length)
+            : diagnosticosPendentes().then((l) => l.length)).catch(zero),
+        // Gestor: kaizens novos e pedidos de avanço esperando a aprovação dele.
         usuario.perfil === 'company_admin'
-            ? ler('kaizens', `select=id&etapa=eq.verificar&empresa_id=eq.${valor(usuario.empresaId)}`).then((l) => l.length).catch(zero)
+            ? ler('kaizens', `select=id&pedido_etapa=not.is.null&etapa=not.eq.arquivado&empresa_id=eq.${valor(usuario.empresaId)}`).then((l) => l.length).catch(zero)
             : 0,
     ]);
     return { solicitacoes, cultura, kaizen };

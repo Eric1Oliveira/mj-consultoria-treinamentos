@@ -5,7 +5,7 @@
 //        #/cultura/modelos · #/cultura/modelos/novo · #/cultura/modelos/:id   (cultura-modelos.js)
 
 import * as dados from '../dados.js';
-import { ehEquipe, pode, faixaRisco, GAP_PONTO_CEGO, zonaEnps } from '../regras.js';
+import { ehEquipe, pode, faixaRisco, GAP_PONTO_CEGO, zonaEnps, DIAS_COLETA } from '../regras.js';
 import { t, formatarNumero, formatarPercentual, formatarData } from '../textos.js';
 import { html, icone, opcao, anunciar, irPara, mostrarErro, perguntar, celebrar, baixarCsv, indicador } from '../app.js';
 import {
@@ -17,11 +17,25 @@ import {
 
 const nomeDimensao = (d, id) => d.dimensoes.find((x) => x.id === id)?.nome ?? id;
 
-function situacaoDiagnostico(d) {
+function situacaoDiagnostico(d, usuario = null) {
     if (d.aberto) {
         return html`<span class="selo selo--sucesso"><span class="ponto-vivo" aria-hidden="true"></span>${d.fechaEm ? t('cultura.abertoAte', { data: formatarData(`${d.fechaEm}T12:00:00`, { day: 'numeric', month: 'short' }) }) : t('cultura.aberto')}</span>`;
     }
-    return html`<span class="selo selo--neutro">${t('cultura.encerrado')}</span>`;
+    // Encerrado: o resultado passa pela avaliação do administrador antes de chegar ao gestor.
+    const liberado = Boolean(d.liberado ?? d.liberadoEm);
+    const avaliacao = liberado
+        ? html`<span class="selo selo--sucesso">${icone('check', 'icone icone--p')}${t('cultura.liberadoGestor')}</span>`
+        : usuario && ehEquipe(usuario.perfil)
+            ? html`<span class="selo selo--aviso-p">${t('cultura.aguardandoSuaAvaliacao')}</span>`
+            : html`<span class="selo selo--neutro">${t('cultura.aguardandoAvaliacao')}</span>`;
+    return html`<span class="selo selo--neutro">${t('cultura.encerrado')}</span>${usuario ? avaliacao : ''}`;
+}
+
+/** Hoje + n dias, no formato do campo de data (AAAA-MM-DD, fuso local). */
+function diaDaqui(n) {
+    const dia = new Date();
+    dia.setDate(dia.getDate() + n);
+    return dia.toLocaleDateString('sv-SE');
 }
 
 function abas(atual) {
@@ -47,8 +61,8 @@ function cabecalho(usuario, sub) {
 
 // ------------------------------------------------------------- panorama --
 
-/** Modelo que vem com a plataforma (supabase/schema.sql): "Maturidade da gestão e da cultura". */
-const MODELO_PADRAO = 'a0000000-0000-4000-8000-000000000001';
+/** Modelo que vem com a plataforma (supabase/schema.sql): "Cultura de segurança de alimentos". */
+const MODELO_PADRAO = 'a0000000-0000-4000-8000-000000000011';
 
 async function telaPanorama(usuario, consulta) {
     // O mapa sai junto com a lista de modelos (o pedido já sabe qual modelo mostrar na maioria das vezes).
@@ -230,13 +244,15 @@ function ligarLiberarCurso(raiz, recarregar) {
 
 function itemDiagnostico(usuario, d) {
     const taxa = d.elegiveis ? d.respondentes / d.elegiveis : 0;
-    const gere = ehEquipe(usuario.perfil) || usuario.perfil === 'company_admin';
-    const podeVer = gere || !d.aberto;
+    const equipe = ehEquipe(usuario.perfil);
+    const gere = equipe || usuario.perfil === 'company_admin';
+    // A equipe abre sempre; o gestor abre para acompanhar a adesão; o funcionário, só depois da liberação.
+    const podeVer = gere || (!d.aberto && d.liberado);
     return html`<li class="diagnostico">
         <div class="diagnostico-corpo">
-            <p class="sobretitulo">${ehEquipe(usuario.perfil) ? d.empresaNome : t('cultura.diagnostico')}</p>
+            <p class="sobretitulo">${equipe ? d.empresaNome : t('cultura.diagnostico')}</p>
             <h3 class="diagnostico-titulo">${podeVer ? html`<a href="#/cultura/${d.id}">${d.titulo}</a>` : d.titulo}</h3>
-            <p class="diagnostico-meta">${situacaoDiagnostico(d)}<span>${t('cultura.perguntasMin', { n: d.perguntas, min: Math.max(3, Math.round(d.perguntas / 4)) })}</span><span>${formatarData(d.criadoEm, { dateStyle: 'medium' })}</span></p>
+            <p class="diagnostico-meta">${situacaoDiagnostico(d, gere ? usuario : null)}<span>${t('cultura.perguntasMin', { n: d.perguntas, min: Math.max(3, Math.round(d.perguntas / 4)) })}</span><span>${formatarData(d.criadoEm, { dateStyle: 'medium' })}</span></p>
         </div>
         <div class="diagnostico-adesao">
             <p class="diagnostico-adesao-rotulo" id="adesao-${d.id}">${t('cultura.adesao', { n: formatarNumero(d.respondentes), total: formatarNumero(d.elegiveis) })}<span>${formatarPercentual(taxa)}</span></p>
@@ -263,7 +279,7 @@ async function telaDiagnosticos(usuario, consulta) {
     // Gestor: o retrato mais recente da empresa no topo.
     let retrato = '';
     if (usuario.perfil === 'company_admin') {
-        const recente = lista.find((d) => d.respondentes > 0);
+        const recente = lista.find((d) => d.respondentes > 0 && d.liberado);
         if (recente) {
             try {
                 const r = await dados.resultadoDiagnostico(recente.id);
@@ -400,8 +416,9 @@ async function telaNovo(usuario, consulta) {
                             </select>
                         </div>
                         <div class="campo">
-                            <label for="diag-novo-fecha">${t('cultura.fechaEm')} <span class="rotulo-opcional">(${t('comum.opcional')})</span></label>
-                            <input id="diag-novo-fecha" name="fechaEm" type="date" min="${new Date().toLocaleDateString('sv-SE')}">
+                            <label for="diag-novo-fecha">${t('cultura.fechaEm')}</label>
+                            <input id="diag-novo-fecha" name="fechaEm" type="date" min="${diaDaqui(0)}" max="${diaDaqui(DIAS_COLETA)}" value="${diaDaqui(DIAS_COLETA)}" aria-describedby="diag-fecha-dica">
+                            <p id="diag-fecha-dica" class="campo-dica">${t('cultura.fechaEmDica')}</p>
                         </div>
                         <div class="campo">
                             <label for="diag-novo-anonimato">${t('cultura.anonimato')}</label>
@@ -707,7 +724,267 @@ function blocoPerguntas(d, r) {
         })}</div>`;
 }
 
-function blocoPlano(usuario, d, r, cursos) {
+// ------------------------------------------------ avaliação e plano de ações --
+
+const hojeIso = () => new Date().toLocaleDateString('sv-SE');
+const atrasada = (a) => a.status !== 'concluida' && Boolean(a.prazo) && a.prazo < hojeIso();
+const STATUS_ACAO = ['pendente', 'andamento', 'concluida'];
+const paragrafos = (texto) => String(texto).split(/\n+/).filter(Boolean).map((p) => html`<p>${p}</p>`);
+
+/** Administrador: escreve o parecer e libera o resultado (encerrado) para o gestor. */
+function blocoAvaliacao(d, r) {
+    const liberado = Boolean(r?.liberadoEm);
+    return html`<section class="painel-bloco avaliacao-admin sem-impressao" aria-labelledby="avaliacao-titulo">
+        <div class="bloco-cabecalho">
+            <h2 id="avaliacao-titulo" class="bloco-titulo">${icone('escudo', 'icone icone--p')}${t('cultura.avaliacaoTitulo')}</h2>
+            <p class="bloco-nota">${liberado ? t('cultura.liberadoEm', { data: formatarData(r.liberadoEm, { dateStyle: 'medium' }) }) : t('cultura.avaliacaoNota')}</p>
+        </div>
+        ${d.aberto ? html`<p class="nota">${icone('clock', 'icone icone--p')}${t('cultura.encerreAntes')}</p>` : html`
+            <form class="formulario formulario--compacto" data-form="liberar" novalidate>
+                <div class="campo">
+                    <label for="parecer-texto">${t('cultura.parecerRotulo')}</label>
+                    <textarea id="parecer-texto" name="parecer" rows="5" maxlength="3000">${r?.parecer ?? ''}</textarea>
+                </div>
+                <div class="acoes">
+                    <button type="submit" class="botao ${liberado ? 'botao--secundario' : 'botao--primario'}" data-liberado="${liberado ? '1' : ''}">${icone(liberado ? 'check' : 'send', 'icone icone--p')}${liberado ? t('cultura.atualizarParecer') : t('cultura.liberarResultado')}</button>
+                </div>
+            </form>`}
+    </section>`;
+}
+
+/** Gestor: o parecer da consultoria (o que fazer para subir a maturidade). */
+function blocoParecer(r) {
+    if (!r.parecer) return '';
+    return html`<section class="painel-bloco parecer-consultoria" aria-labelledby="parecer-titulo">
+        <div class="bloco-cabecalho">
+            <h2 id="parecer-titulo" class="bloco-titulo">${icone('escudo', 'icone icone--p')}${t('cultura.parecerGestorTitulo')}</h2>
+            <p class="bloco-nota">${t('cultura.parecerGestorNota')}</p>
+        </div>
+        <div class="a3-texto">${paragrafos(r.parecer)}</div>
+    </section>`;
+}
+
+function linhaAcao(d, a, podeGerir) {
+    const dimensao = a.dimensao ? nomeDimensao(d, a.dimensao) : t('cultura.semDimensao');
+    const vencida = atrasada(a);
+    return html`<tr class="${a.status === 'concluida' ? 'acao--concluida' : ''}">
+        <th scope="row">${a.titulo}</th>
+        <td data-rotulo="${t('cultura.dimensaoAcao')}">${dimensao}</td>
+        <td data-rotulo="${t('cultura.funcao')}">${a.funcao || t('comum.semValor')}</td>
+        <td data-rotulo="${t('cultura.responsavel')}">${a.responsavel || t('comum.semValor')}</td>
+        <td data-rotulo="${t('cultura.prazo')}">${a.prazo ? formatarData(`${a.prazo}T12:00:00`, { dateStyle: 'medium' }) : t('comum.semValor')}${vencida ? html` <span class="selo selo--perigo">${t('cultura.atrasada')}</span>` : ''}</td>
+        <td data-rotulo="${t('cultura.status')}">${podeGerir
+            ? html`<select class="acao-status" data-status-acao="${a.id}" aria-label="${t('cultura.statusDe', { acao: a.titulo })}">${STATUS_ACAO.map((s) => opcao(s, t(`cultura.statusOpcoes.${s}`), s === a.status))}</select>`
+            : html`<span class="selo ${a.status === 'concluida' ? 'selo--sucesso' : a.status === 'andamento' ? 'selo--marca' : 'selo--neutro'}">${t(`cultura.statusOpcoes.${a.status}`)}</span>`}</td>
+        ${podeGerir ? html`<td class="acoes-linha sem-impressao">
+            <button type="button" class="botao botao--fantasma botao--p" data-editar-acao="${a.id}">${t('comum.editar')}<span class="sr-only"> – ${a.titulo}</span></button>
+            <button type="button" class="botao-icone" data-excluir-acao="${a.id}" aria-label="${t('cultura.excluirAcao', { acao: a.titulo })}">${icone('lixo', 'icone icone--p')}</button>
+        </td>` : ''}
+    </tr>`;
+}
+
+function formularioAcao(d, pessoas) {
+    return html`<form class="formulario formulario--compacto acao-form sem-impressao" data-form="acao" novalidate>
+        <h3 class="subbloco-titulo" data-acao-legenda>${t('cultura.novaAcao')}</h3>
+        <input type="hidden" name="acaoId" value="">
+        <div class="campo">
+            <label for="acao-titulo">${t('cultura.acao')}</label>
+            <input id="acao-titulo" name="titulo" maxlength="300" required placeholder="${t('cultura.acaoExemplo')}">
+        </div>
+        <div class="grade-3">
+            <div class="campo">
+                <label for="acao-dimensao">${t('cultura.dimensaoAcao')}</label>
+                <select id="acao-dimensao" name="dimensao">${opcao('', t('cultura.semDimensao'), true)}${d.dimensoes.map((dm) => opcao(dm.id, dm.nome, false))}</select>
+            </div>
+            <div class="campo">
+                <label for="acao-funcao">${t('cultura.funcao')}</label>
+                <input id="acao-funcao" name="funcao" maxlength="120" placeholder="${t('cultura.funcaoExemplo')}">
+            </div>
+            <div class="campo">
+                <label for="acao-responsavel">${t('cultura.responsavel')}</label>
+                <input id="acao-responsavel" name="responsavel" maxlength="120" list="acao-pessoas" autocomplete="off">
+                <datalist id="acao-pessoas">${pessoas.map((p) => html`<option value="${p.nome}"></option>`)}</datalist>
+            </div>
+        </div>
+        <div class="grade-3">
+            <div class="campo">
+                <label for="acao-prazo">${t('cultura.prazo')}</label>
+                <input id="acao-prazo" name="prazo" type="date">
+            </div>
+            <div class="campo">
+                <label for="acao-status">${t('cultura.status')}</label>
+                <select id="acao-status" name="status">${STATUS_ACAO.map((s) => opcao(s, t(`cultura.statusOpcoes.${s}`), s === 'pendente'))}</select>
+            </div>
+        </div>
+        <p class="campo-erro" data-resumo-erro role="alert" hidden></p>
+        <div class="acoes">
+            <button type="submit" class="botao botao--primario" data-acao-enviar>${icone('plus', 'icone icone--p')}${t('cultura.adicionarAcao')}</button>
+            <button type="button" class="botao botao--fantasma" data-acao-cancelar hidden>${t('cultura.cancelarEdicao')}</button>
+        </div>
+    </form>`;
+}
+
+/** Plano de ações da empresa, com o acompanhamento (concluídas, em andamento, atrasadas). */
+function blocoAcoes(d, acoes, podeGerir, pessoas) {
+    const total = acoes.length;
+    const concluidas = acoes.filter((a) => a.status === 'concluida').length;
+    const pct = total ? concluidas / total : 0;
+    return html`<section class="painel-bloco" id="plano-acoes" aria-labelledby="acoes-titulo">
+        <div class="bloco-cabecalho">
+            <h2 id="acoes-titulo" class="bloco-titulo">${t('cultura.acoesTitulo')}</h2>
+            <p class="bloco-nota">${t('cultura.acoesNota')}</p>
+        </div>
+        ${total ? html`
+            <dl class="mini-indicadores acoes-resumo">
+                <div><dt>${t('cultura.acoesTotal')}</dt><dd>${formatarNumero(total)}</dd></div>
+                <div><dt>${t('cultura.acoesConcluidas')}</dt><dd>${formatarNumero(concluidas)}</dd></div>
+                <div><dt>${t('cultura.acoesAndamento')}</dt><dd>${formatarNumero(acoes.filter((a) => a.status === 'andamento').length)}</dd></div>
+                <div><dt>${t('cultura.acoesAtrasadas')}</dt><dd>${formatarNumero(acoes.filter(atrasada).length)}</dd></div>
+            </dl>
+            <p id="acoes-progresso" class="bloco-nota">${t('cultura.acoesProgresso', { pct: formatarPercentual(pct) })}</p>
+            <div class="barra barra--fina" role="progressbar" aria-labelledby="acoes-progresso" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct * 100)}"><span class="barra-preenchida" data-progresso="${Math.round(pct * 100)}"></span></div>
+            <div class="tabela-rolagem" tabindex="0" role="region" aria-labelledby="acoes-titulo">
+                <table class="tabela tabela--cartoes tabela--acoes">
+                    <thead><tr>
+                        <th scope="col">${t('cultura.acao')}</th>
+                        <th scope="col">${t('cultura.dimensaoAcao')}</th>
+                        <th scope="col">${t('cultura.funcao')}</th>
+                        <th scope="col">${t('cultura.responsavel')}</th>
+                        <th scope="col">${t('cultura.prazo')}</th>
+                        <th scope="col">${t('cultura.status')}</th>
+                        ${podeGerir ? html`<th scope="col" class="sem-impressao"><span class="sr-only">${t('comum.acoes')}</span></th>` : ''}
+                    </tr></thead>
+                    <tbody>${acoes.map((a) => linhaAcao(d, a, podeGerir))}</tbody>
+                </table>
+            </div>` : html`<p class="vazio">${t('cultura.semAcoes')}</p>`}
+        ${podeGerir ? formularioAcao(d, pessoas) : ''}
+    </section>`;
+}
+
+/** Como a nota vira nível de maturidade (as mesmas contas do servidor). */
+function blocoCalculo(d) {
+    if (d.interpretacao === 'risco') return '';
+    return html`<details class="painel-bloco calculo">
+        <summary class="bloco-titulo">${icone('bussola', 'icone icone--p')}${t('cultura.calculoTitulo')}${icone('descer', 'icone icone--p recolhivel-seta')}</summary>
+        <div class="calculo-corpo">
+            <p>${t('cultura.calculo1')}</p>
+            <p>${t('cultura.calculo2')}</p>
+            <p>${t('cultura.calculo3')}</p>
+            <p>${t('cultura.calculo4')}</p>
+            <ol class="calculo-niveis" role="list">${nomesNiveis(d).map((_, i) => html`<li>
+                ${seloLeitura(i * 20 + 10, d)}<span class="calculo-faixa">${t('cultura.faixa', { de: i * 20, ate: i === 4 ? 100 : i * 20 + 19 })}</span>
+            </li>`)}</ol>
+        </div>
+    </details>`;
+}
+
+function ligarAcoes(raiz, d, acoes, recarregar) {
+    const form = raiz.querySelector('[data-form="acao"]');
+    const editar = (a) => {
+        if (!form) return;
+        form.acaoId.value = a?.id ?? '';
+        form.titulo.value = a?.titulo ?? '';
+        form.dimensao.value = a?.dimensao ?? '';
+        form.funcao.value = a?.funcao ?? '';
+        form.responsavel.value = a?.responsavel ?? '';
+        form.prazo.value = a?.prazo ?? '';
+        form.status.value = a?.status ?? 'pendente';
+        form.querySelector('[data-acao-legenda]').textContent = a?.id ? t('cultura.editandoAcao') : t('cultura.novaAcao');
+        form.querySelector('[data-acao-enviar]').lastChild.textContent = a?.id ? t('cultura.salvarAcao') : t('cultura.adicionarAcao');
+        form.querySelector('[data-acao-cancelar]').hidden = !a?.id;
+    };
+
+    raiz.addEventListener('click', async (evento) => {
+        const sugerir = evento.target.closest('[data-sugerir-acao]');
+        if (sugerir && form) {
+            editar(null);
+            form.dimensao.value = sugerir.dataset.sugerirAcao;
+            form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            form.titulo.focus({ preventScroll: true });
+            return;
+        }
+        const botaoEditar = evento.target.closest('[data-editar-acao]');
+        if (botaoEditar) {
+            editar(acoes.find((a) => a.id === botaoEditar.dataset.editarAcao));
+            form?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            form?.titulo.focus({ preventScroll: true });
+            return;
+        }
+        if (evento.target.closest('[data-acao-cancelar]')) {
+            editar(null);
+            return;
+        }
+        const excluir = evento.target.closest('[data-excluir-acao]');
+        if (excluir) {
+            const ok = await perguntar({ titulo: t('cultura.excluirAcaoTitulo'), texto: t('cultura.excluirAcaoTexto'), confirmar: t('cultura.excluir'), perigo: true });
+            if (!ok) return;
+            try {
+                await dados.excluirAcao(excluir.dataset.excluirAcao);
+                anunciar(t('cultura.acaoExcluida'));
+                await recarregar();
+            } catch (erro) {
+                mostrarErro(erro);
+            }
+        }
+    });
+
+    // Mudar o status direto na tabela.
+    raiz.addEventListener('change', async (evento) => {
+        const seletor = evento.target.closest('[data-status-acao]');
+        if (!seletor) return;
+        const a = acoes.find((x) => x.id === seletor.dataset.statusAcao);
+        seletor.disabled = true;
+        try {
+            await dados.salvarAcao({ ...a, status: seletor.value });
+            anunciar(t('cultura.acaoSalva'));
+            await recarregar();
+        } catch (erro) {
+            seletor.disabled = false;
+            mostrarErro(erro);
+        }
+    });
+
+    form?.addEventListener('submit', async (evento) => {
+        evento.preventDefault();
+        const botao = form.querySelector('[data-acao-enviar]');
+        botao.disabled = true;
+        try {
+            await dados.salvarAcao({
+                id: form.acaoId.value, diagnosticoId: d.id, titulo: form.titulo.value, dimensao: form.dimensao.value,
+                funcao: form.funcao.value, responsavel: form.responsavel.value, prazo: form.prazo.value, status: form.status.value,
+            });
+            anunciar(t('cultura.acaoSalva'));
+            await recarregar();
+        } catch (erro) {
+            botao.disabled = false;
+            mostrarErro(erro, form);
+        }
+    });
+}
+
+function ligarLiberacao(raiz, d, recarregar) {
+    const form = raiz.querySelector('[data-form="liberar"]');
+    form?.addEventListener('submit', async (evento) => {
+        evento.preventDefault();
+        const botao = form.querySelector('[type="submit"]');
+        const jaLiberado = Boolean(botao.dataset.liberado);
+        if (!jaLiberado) {
+            const ok = await perguntar({ titulo: t('cultura.liberarResultadoTitulo'), texto: t('cultura.liberarResultadoTexto'), confirmar: t('cultura.liberarResultado') });
+            if (!ok) return;
+        }
+        botao.disabled = true;
+        try {
+            await dados.liberarResultado(d.id, form.parecer.value);
+            anunciar(jaLiberado ? t('cultura.parecerAtualizado') : t('cultura.liberadoAviso'));
+            await recarregar();
+        } catch (erro) {
+            botao.disabled = false;
+            mostrarErro(erro, form);
+        }
+    });
+}
+
+function blocoPlano(usuario, d, r, cursos, podeGerirAcoes = false) {
     const fracas = [...(r.dimensoes ?? [])].filter((x) => x.score !== null).sort((a, b) => a.score - b.score).slice(0, 3);
     if (!fracas.length) return '';
     const equipe = ehEquipe(usuario.perfil);
@@ -730,6 +1007,7 @@ function blocoPlano(usuario, d, r, cursos) {
                             : equipe
                                 ? html`<button type="button" class="botao botao--secundario botao--p" data-liberar="${c.id}" data-empresa="${d.empresaId}" data-nomes="${c.titulo}|${d.empresaNome}">${icone('send', 'icone icone--p')}${t('cultura.liberarCurso', { curso: c.titulo })}</button>`
                                 : html`<span class="selo selo--neutro">${icone('book', 'icone icone--p')}${c.titulo} · ${t('cultura.pecaConsultoria')}</span>`))}
+                        ${podeGerirAcoes ? html`<button type="button" class="botao botao--secundario botao--p sem-impressao" data-sugerir-acao="${dm.id}">${icone('plus', 'icone icone--p')}${t('cultura.criarAcao')}<span class="sr-only"> – ${dm.nome}</span></button>` : ''}
                         <a class="botao botao--fantasma botao--p" href="#/kaizen/novo?empresa=${d.empresaId}&dimensao=${encodeURIComponent(dm.nome)}">${icone('lampada', 'icone icone--p')}${t('cultura.abrirKaizen')}</a>
                     </div>
                 </div>
@@ -749,11 +1027,18 @@ async function telaResultado(usuario, id, recarregar) {
     }
     // Cursos para o plano de ação: a equipe vê o catálogo; o gestor, só o que já é da empresa.
     const cursos = r?.completo ? (ehEquipe(usuario.perfil) ? await dados.listarCursosResumo() : (await dados.listarCursos(usuario)).map((c) => ({ ...c, empresas: c.empresas ?? [d.empresaId] }))) : [];
-    const voltar = ehEquipe(usuario.perfil) ? '#/cultura/diagnosticos' : '#/cultura';
+    const equipe = ehEquipe(usuario.perfil);
+    const voltar = equipe ? '#/cultura/diagnosticos' : '#/cultura';
+    // Plano de ações: a equipe sempre; o gestor depois que o administrador liberou o resultado.
+    const podeGerirAcoes = Boolean(r?.completo) && (equipe || usuario.perfil === 'company_admin');
+    const [acoes, pessoas] = r?.completo ? await Promise.all([
+        dados.listarAcoes(d.id).catch(() => []),
+        podeGerirAcoes ? dados.colegas(d.empresaId).catch(() => []) : [],
+    ]) : [[], []];
 
     const acoesGestao = d.possoGerir ? html`
         ${d.aberto ? html`<button type="button" class="botao botao--secundario" data-gerir="encerrar">${t('cultura.encerrar')}</button>`
-            : html`<button type="button" class="botao botao--secundario" data-gerir="reabrir">${t('cultura.reabrir')}</button>`}
+            : pode(usuario, 'reabrir-diagnostico') ? html`<button type="button" class="botao botao--secundario" data-gerir="reabrir">${t('cultura.reabrir')}</button>` : ''}
         ${r && r.respondentes === 0 ? html`<button type="button" class="botao botao--fantasma" data-gerir="excluir">${icone('lixo', 'icone icone--p')}${t('cultura.excluir')}</button>` : ''}
         ${r && !r.oculto ? html`<button type="button" class="botao botao--secundario" data-gerir="csv">${icone('download', 'icone icone--p')}${t('relatorios.exportar')}</button>
             <button type="button" class="botao botao--secundario" data-gerir="imprimir">${icone('print', 'icone icone--p')}${t('cultura.imprimir')}</button>` : ''}` : '';
@@ -764,14 +1049,16 @@ async function telaResultado(usuario, id, recarregar) {
             <div>
                 <p class="sobretitulo">${d.empresaNome}</p>
                 <h1 class="titulo" tabindex="-1">${d.titulo}</h1>
-                <p class="diagnostico-meta">${situacaoDiagnostico(d)}<span>${t('cultura.lancadoEm', { data: formatarData(d.criadoEm, { dateStyle: 'medium' }) })}</span><span>${t(`cultura.publicos.${d.publico}`)}</span></p>
+                <p class="diagnostico-meta">${situacaoDiagnostico(d, d.possoGerir ? usuario : null)}<span>${t('cultura.lancadoEm', { data: formatarData(d.criadoEm, { dateStyle: 'medium' }) })}</span><span>${t(`cultura.publicos.${d.publico}`)}</span></p>
             </div>
             <div class="acoes sem-impressao">
                 ${d.possoResponder ? html`<a class="botao botao--primario" href="#/cultura/${d.id}/responder">${t('cultura.responder')}</a>` : ''}
                 ${acoesGestao}
             </div>
         </header>
-        ${d.norma ? html`<p class="norma">${icone('escudo', 'icone icone--p')}${d.norma}</p>` : ''}`;
+        ${d.norma ? html`<p class="norma">${icone('escudo', 'icone icone--p')}${d.norma}</p>` : ''}
+        ${equipe && r ? blocoAvaliacao(d, r) : ''}
+        ${!equipe && r?.completo ? blocoParecer(r) : ''}`;
 
     if (!r) {
         return {
@@ -789,7 +1076,7 @@ async function telaResultado(usuario, id, recarregar) {
     const emRiscoAlto = d.interpretacao === 'risco' ? dims.filter((x) => faixaRisco(x.score) === 'alto').length : null;
     const zona = r.enps ? zonaEnps(r.enps.score) : null;
 
-    const conteudo = r.oculto ? html`${cabecalhoResultado}${blocoOculto(d, r)}` : html`
+    const conteudo = r.oculto ? html`${cabecalhoResultado}${blocoOculto(d, r)}${blocoCalculo(d)}` : html`
         ${cabecalhoResultado}
         <section aria-labelledby="res-resumo">
             <h2 id="res-resumo" class="sr-only">${t('painel.resumo')}</h2>
@@ -814,6 +1101,7 @@ async function telaResultado(usuario, id, recarregar) {
                     </div>
                     ${tabelaDimensoes(d, r)}
                 </section>
+                ${r.completo ? blocoAcoes(d, acoes, podeGerirAcoes, pessoas) : ''}
                 ${r.completo ? html`<section class="painel-bloco" aria-labelledby="res-perguntas">
                     <div class="bloco-cabecalho">
                         <h2 id="res-perguntas" class="bloco-titulo">${t('cultura.perguntaAPergunta')}</h2>
@@ -830,7 +1118,7 @@ async function telaResultado(usuario, id, recarregar) {
                 </section>` : ''}
             </div>
             <div class="painel-coluna painel-coluna--lateral">
-                ${r.completo ? blocoPlano(usuario, d, r, cursos) : html`<section class="painel-bloco"><h2 class="bloco-titulo">${t('cultura.obrigadoDevolutiva')}</h2><p class="bloco-nota">${t('cultura.devolutivaTexto')}</p></section>`}
+                ${r.completo ? blocoPlano(usuario, d, r, cursos, podeGerirAcoes) : html`<section class="painel-bloco"><h2 class="bloco-titulo">${t('cultura.obrigadoDevolutiva')}</h2><p class="bloco-nota">${t('cultura.devolutivaTexto')}</p></section>`}
                 ${r.enps ? html`<section class="painel-bloco" aria-labelledby="res-enps">
                     <h2 id="res-enps" class="bloco-titulo">${t('cultura.enps')}</h2>
                     <p class="enps-numero">${r.enps.score > 0 ? '+' : ''}${r.enps.score}<span>${t(`cultura.zonas.${zona}`)}</span></p>
@@ -854,6 +1142,7 @@ async function telaResultado(usuario, id, recarregar) {
                 </section>` : ''}
             </div>
         </div>
+        ${blocoCalculo(d)}
         <p class="nota nota--anonimato">${icone('lock', 'icone icone--p')}${t('cultura.privacidadeRodape', { min: r.anonimatoMinimo })}</p>`;
 
     return {
@@ -861,6 +1150,8 @@ async function telaResultado(usuario, id, recarregar) {
         conteudo,
         montar(raiz) {
             ligarGestao(raiz, d, r, recarregar);
+            ligarLiberacao(raiz, d, recarregar);
+            ligarAcoes(raiz, d, acoes, recarregar);
             ligarLiberarCurso(raiz, recarregar);
         },
     };
