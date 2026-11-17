@@ -63,9 +63,22 @@ atualizar. Para mudar o limite, no SQL Editor:
   ganha pontos quando o gestor aprova; a premiação do kaizen padronizado vale uma vez por ano para
   cada pessoa. A "dimensão da cultura" usa as 5 dimensões do diagnóstico.
 - **Ranking** (`#/ranking`): semana, mês ou geral, com o **desafio do mês** (ler/assistir o DMQSA mais
-  recente = 50 pontos).
-- **Divulgação**: `web/divulgacao.html` é a página para novos clientes, e `web/email-divulgacao.html`
-  o modelo de e-mail que aponta para ela.
+  recente = 50 pontos). O gestor pode **ajustar a pontuação** da empresa (valor de cada ação, de 0 a
+  1000); vale para os pontos ganhos dali em diante, os já ganhos não mudam. Sem ajuste, vale o padrão.
+- **Relatórios**: cada curso concluído tem o link do certificado; o gestor abre, imprime ou salva em PDF.
+- **Divulgação** (`#/divulgacao`, só o administrador): o **endereço do site (domínio)**, o WhatsApp de
+  contato, todos os links prontos para copiar (página de divulgação, entrar, validar certificado, entrada
+  de cada empresa) e o **e-mail para novos clientes** (copiar para o Gmail/Outlook ou baixar o HTML, com
+  assunto, título e texto editáveis). `web/divulgacao.html` é a página para novos clientes; o WhatsApp
+  dela vem dessa configuração.
+
+### Domínio
+
+Todo link que o site monta (convites, acesso de quem não tem e-mail, validação impressa no certificado,
+links da Divulgação e o e-mail) usa o **Endereço do site** salvo em *Divulgação*; em branco, usa o
+endereço em que o site está aberto. Ao comprar o domínio: apontar o domínio para a hospedagem; no
+Supabase, *Authentication → URL Configuration*, trocar o *Site URL* e acrescentar o domínio em
+*Redirect URLs*; e salvar o endereço em *Divulgação*. Nada mais no código precisa mudar.
 - **Busca rápida**: `Ctrl/⌘ + K` em qualquer tela.
 
 ### Anonimato dos diagnósticos
@@ -77,7 +90,15 @@ mínimo de respostas definido no lançamento (3 por padrão), aplica o mesmo mí
 áreas e evita que um grupo pequeno seja revelado por subtração. A "visão da liderança"
 é avisada no questionário dos gestores.
 
-Contas novas entram só por convite: a pessoa abre o link, informa nome e cria a senha.
+Contas novas entram por convite: a pessoa abre o link, informa nome e cria a senha.
+
+### Colaborador sem e-mail
+
+Em *Funcionários → Colaborador sem e-mail* o gestor cadastra nome, usuário (ex.: matrícula), área e
+uma senha inicial. A conta de acesso é criada pelo banco (`cadastrar_colaborador`), já confirmada, com o
+endereço interno `<usuário>@sem-email.invalid` (domínio reservado, nunca recebe e-mail). A pessoa entra
+com usuário e senha na mesma tela de login e faz os cursos atribuídos como qualquer funcionário. Ela
+troca a senha em *Minha conta*; se esquecer, o gestor usa *Redefinir senha* na lista.
 
 ## Perfis
 

@@ -1,8 +1,9 @@
-// Funcionários de uma empresa: busca, edição, desativação, perfil e convites
-// (um a um ou em lote). Os blocos de convite também servem à tela "Equipe".
+// Funcionários de uma empresa: busca, edição, desativação, perfil, convites
+// (um a um ou em lote) e o cadastro de quem não tem e-mail (usuário e senha).
+// Os blocos de convite também servem à tela "Equipe".
 
 import * as dados from '../dados.js';
-import { pode, podeGerirPessoa, podeConvidar, ehEquipe } from '../regras.js';
+import { pode, podeGerirPessoa, podeConvidar, ehEquipe, usuarioInterno, sugerirUsuario, gerarSenhaInicial } from '../regras.js';
 import { t, formatarRelativo } from '../textos.js';
 import { html, icone, avatar, opcao, anunciar, mostrarErro, limparErros, desenharEm, perguntar, copiarTexto, enderecoDe } from '../app.js';
 
@@ -176,6 +177,106 @@ function ligarLote(raiz, usuario, empresaId, recarregar) {
     });
 }
 
+// --------------------------------------------------- colaborador sem e-mail --
+// Para quem não tem e-mail: o gestor cadastra os dados e uma senha inicial; o colaborador
+// entra com usuário e senha. As credenciais aparecem uma única vez, logo depois do cadastro.
+
+let ultimoAcesso = null; // { nome, usuario, senha, empresaId } do último cadastro desta tela
+
+function caixaAcesso(acesso) {
+    if (!acesso) return '';
+    const endereco = enderecoDe('login');
+    const entrega = t('semEmail.textoEntrega', { nome: acesso.nome, endereco, usuario: acesso.usuario, senha: acesso.senha });
+    return html`<div class="caixa-link caixa-acesso" role="group" aria-labelledby="caixa-acesso-titulo" tabindex="-1" data-caixa-acesso-pronta>
+        <p id="caixa-acesso-titulo" class="caixa-link-titulo">${icone('check', 'icone icone--p')}${t('semEmail.criadoTitulo', { nome: acesso.nome })}</p>
+        <dl class="ficha ficha--acesso">
+            <div><dt>${t('semEmail.endereco')}</dt><dd>${endereco}</dd></div>
+            <div><dt>${t('semEmail.usuario')}</dt><dd><code>${acesso.usuario}</code></dd></div>
+            <div><dt>${t('semEmail.senha')}</dt><dd><code>${acesso.senha}</code></dd></div>
+        </dl>
+        <p class="campo-dica">${t('semEmail.aviso')}</p>
+        <div class="acoes acoes--p">
+            <button type="button" class="botao botao--secundario botao--p" data-copiar-acesso="${entrega}">${icone('copy', 'icone icone--p')}${t('semEmail.copiar')}</button>
+            <a class="botao botao--primario botao--p" href="#/cursos">${t('semEmail.atribuir')}${icone('arrow', 'icone icone--p')}</a>
+        </div>
+    </div>`;
+}
+
+function blocoSemEmail(areas, acesso) {
+    return html`<details class="painel-bloco painel-bloco--recolhivel" ${acesso ? html`open` : ''}>
+        <summary class="bloco-titulo">${icone('user', 'icone')}<span>${t('semEmail.titulo')}</span>${icone('arrow', 'icone icone--p recolhivel-seta')}</summary>
+        <p class="bloco-nota">${t('semEmail.nota')}</p>
+        <form class="formulario formulario--compacto" data-form="sem-email" novalidate>
+            <div class="campo">
+                <label for="se-nome">${t('comum.nome')}</label>
+                <input id="se-nome" name="nome" maxlength="120" required autocomplete="off">
+            </div>
+            <div class="campo">
+                <label for="se-usuario">${t('semEmail.usuario')}</label>
+                <input id="se-usuario" name="usuario" maxlength="40" required autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="se-usuario-dica">
+                <p id="se-usuario-dica" class="campo-dica">${t('semEmail.usuarioDica')}</p>
+            </div>
+            <div class="campo">
+                <label for="se-area">${t('pessoas.area')} <span class="rotulo-opcional">(${t('comum.opcional')})</span></label>
+                <input id="se-area" name="area" maxlength="60" autocomplete="off" list="se-areas">
+                ${areas.length ? html`<datalist id="se-areas">${areas.map((a) => html`<option value="${a}"></option>`)}</datalist>` : ''}
+            </div>
+            <div class="campo">
+                <label for="se-senha">${t('semEmail.senhaInicial')}</label>
+                <div class="campo-com-botao">
+                    <input id="se-senha" name="senha" maxlength="72" required autocomplete="off" spellcheck="false" autocapitalize="none" value="${gerarSenhaInicial()}" aria-describedby="se-senha-dica">
+                    <button type="button" class="botao botao--secundario botao--p" data-gerar-senha>${t('semEmail.gerarOutra')}</button>
+                </div>
+                <p id="se-senha-dica" class="campo-dica">${t('semEmail.senhaDica')}</p>
+            </div>
+            <p class="campo-erro" data-resumo-erro role="alert" hidden></p>
+            <button type="submit" class="botao botao--primario">${t('semEmail.cadastrar')}</button>
+        </form>
+        ${caixaAcesso(acesso)}
+    </details>`;
+}
+
+function ligarSemEmail(raiz, usuario, empresaId, recarregar) {
+    const form = raiz.querySelector('[data-form="sem-email"]');
+    // O usuário sugerido acompanha o nome até a pessoa mexer nele (aí vale o que ela digitou).
+    let usuarioEditado = false;
+    form.usuario.addEventListener('input', () => {
+        usuarioEditado = form.usuario.value.trim() !== '';
+    });
+    form.nome.addEventListener('input', () => {
+        if (!usuarioEditado) form.usuario.value = sugerirUsuario(form.nome.value);
+    });
+    form.querySelector('[data-gerar-senha]').addEventListener('click', () => {
+        form.senha.value = gerarSenhaInicial();
+        form.senha.focus();
+    });
+    form.addEventListener('submit', async (evento) => {
+        evento.preventDefault();
+        limparErros(form);
+        const enviar = form.querySelector('[type="submit"]');
+        enviar.disabled = true;
+        try {
+            const entrada = { empresaId, nome: form.nome.value, usuario: form.usuario.value, area: form.area.value, senha: form.senha.value };
+            const pessoa = await dados.cadastrarColaborador(usuario, entrada);
+            ultimoAcesso = { nome: pessoa.nome, usuario: usuarioInterno(pessoa.email), senha: entrada.senha, empresaId };
+            anunciar(t('semEmail.cadastrado', { nome: pessoa.nome }));
+            await recarregar();
+        } catch (erro) {
+            mostrarErro(erro, form);
+        } finally {
+            enviar.disabled = false;
+        }
+    });
+    raiz.addEventListener('click', (evento) => {
+        const copiar = evento.target.closest('[data-copiar-acesso]');
+        if (copiar) copiarTexto(copiar.dataset.copiarAcesso, t('semEmail.copiado'));
+    });
+    // Depois do cadastro, o foco (e a rolagem) vai para as credenciais. Fica para depois do
+    // desenho da tela, que põe o foco no título.
+    const caixa = raiz.querySelector('[data-caixa-acesso-pronta]');
+    if (caixa) setTimeout(() => caixa.focus(), 0);
+}
+
 // ------------------------------------------------------------- pessoas --
 
 const filtro = { busca: '', situacao: 'todas', area: '' };
@@ -187,16 +288,19 @@ export function linhaPessoa(usuario, p) {
     const mudarPerfil = pode(usuario, 'mudar-perfil', { pessoa: p });
     const area = p.empresaId && pode(usuario, 'definir-area', { pessoa: p });
     const outroPerfil = p.perfil === 'student' ? 'company_admin' : 'student';
+    const login = usuarioInterno(p.email);
+    const senha = pode(usuario, 'redefinir-senha', { pessoa: p });
     return html`
         <li class="linha">
             ${avatar(p.nome)}
             <span class="linha-principal">${p.nome}${p.id === usuario.id ? html` <span class="selo selo--marca">${t('pessoas.voce')}</span>` : ''}
-                <span class="linha-sub">${p.email}</span>
+                <span class="linha-sub">${login ? html`${icone('user', 'icone icone--p')}${t('semEmail.usuarioRotulo', { usuario: login })}` : p.email}</span>
                 <span class="linha-sub">${[t(`perfis.${p.perfil}`), p.area, p.ultimoAcesso ? t('painel.ultimoAcesso', { quando: formatarRelativo(p.ultimoAcesso) }) : t('painel.nuncaEntrou')].filter(Boolean).join(' · ')}</span>
             </span>
             ${p.ativo ? '' : html`<span class="selo selo--neutro">${t('comum.inativo')}</span>`}
-            ${gerir || mudarPerfil || area ? html`<span class="linha-acoes">
+            ${gerir || mudarPerfil || area || senha ? html`<span class="linha-acoes">
                 ${area ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="area" data-id="${p.id}" data-nome="${p.nome}" data-area="${p.area ?? ''}">${p.area ? t('pessoas.mudarArea') : t('pessoas.definirArea')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
+                ${senha && p.ativo ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="senha" data-id="${p.id}" data-nome="${p.nome}">${t('semEmail.redefinir')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${gerir ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="renomear" data-id="${p.id}" data-nome="${p.nome}">${t('pessoas.editarNome')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${mudarPerfil && p.ativo ? html`<button type="button" class="botao botao--secundario botao--p" data-pessoa="perfil" data-id="${p.id}" data-nome="${p.nome}" data-perfil="${outroPerfil}">${t(outroPerfil === 'company_admin' ? 'pessoas.tornarGestor' : 'pessoas.tornarAluno')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
                 ${gerir ? html`<button type="button" class="botao ${p.ativo ? 'botao--fantasma' : 'botao--secundario'} botao--p" data-pessoa="${p.ativo ? 'desativar' : 'reativar'}" data-id="${p.id}" data-nome="${p.nome}">${p.ativo ? t('comum.desativar') : t('comum.reativar')}<span class="sr-only"> – ${p.nome}</span></button>` : ''}
@@ -247,6 +351,18 @@ export function ligarPessoas(raiz, usuario, recarregar) {
                     anunciar(t('pessoas.desativada', { nome }));
                     break;
                 }
+                case 'senha': {
+                    const nova = await perguntar({
+                        titulo: t('semEmail.redefinirTitulo', { nome }),
+                        texto: t('semEmail.redefinirTexto'),
+                        confirmar: t('semEmail.redefinir'),
+                        campo: { rotulo: t('semEmail.senhaNova'), valor: gerarSenhaInicial(), obrigatorio: true, maximo: 72 },
+                    });
+                    if (!nova) return;
+                    await dados.redefinirSenhaColaborador(usuario, id, nova);
+                    anunciar(t('semEmail.senhaRedefinida', { nome }));
+                    break;
+                }
                 case 'reativar':
                     await dados.definirSituacaoPessoa(usuario, id, true);
                     anunciar(t('pessoas.reativada', { nome }));
@@ -294,7 +410,11 @@ export async function tela({ usuario, parametros, recarregar }) {
         filtro.situacao = 'todas';
         filtro.area = '';
         esquecerUltimoConvite();
+        ultimoAcesso = null;
     }
+    // As credenciais do último cadastro aparecem uma vez só (a senha não fica guardada na tela).
+    const acesso = ultimoAcesso?.empresaId === empresaId ? ultimoAcesso : null;
+    ultimoAcesso = null;
 
     // Tudo de uma vez (uma ida ao servidor em vez de três em fila).
     const [empresa, pessoas, areas, todosConvites] = await Promise.all([
@@ -354,7 +474,7 @@ export async function tela({ usuario, parametros, recarregar }) {
                 </div>
                 ${perfisConvite.length ? html`<div class="painel-coluna painel-coluna--lateral">
                     ${blocoConvites({ perfis: perfisConvite, convites, titulo: t('convites.titulo'), empresaId })}
-                    ${perfisConvite.includes('student') && empresa.ativa ? blocoLote() : ''}
+                    ${perfisConvite.includes('student') && empresa.ativa ? html`${blocoSemEmail(areas, acesso)}${blocoLote()}` : ''}
                 </div>` : ''}
             </div>`,
 
@@ -374,6 +494,7 @@ export async function tela({ usuario, parametros, recarregar }) {
             ligarPessoas(raiz, usuario, recarregar);
             if (perfisConvite.length) ligarConvites(raiz, usuario, empresaId, recarregar);
             if (raiz.querySelector('[data-form="lote"]')) ligarLote(raiz, usuario, empresaId, recarregar);
+            if (raiz.querySelector('[data-form="sem-email"]')) ligarSemEmail(raiz, usuario, empresaId, recarregar);
         },
     };
 }

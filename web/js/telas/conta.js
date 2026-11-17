@@ -1,7 +1,7 @@
 // Minha conta: nome, idioma, tema e certificados.
 
 import * as dados from '../dados.js';
-import { podeEstudar } from '../regras.js';
+import { podeEstudar, usuarioInterno } from '../regras.js';
 import { t, IDIOMAS, idiomaAtual, formatarData } from '../textos.js';
 import { html, icone, opcao, anunciar, mostrarErro, mudarPreferencias, preferenciaTema } from '../app.js';
 import { formularioSenha, ligarFormularioSenha } from './senha.js';
@@ -10,6 +10,7 @@ export async function tela({ usuario, empresa, recarregar }) {
     const cursos = podeEstudar(usuario.perfil) ? await dados.listarCursos(usuario) : [];
     const certificados = cursos.filter((c) => c.progresso?.certificadoId);
     const tema = preferenciaTema() ?? '';
+    const login = usuarioInterno(usuario.email); // conta sem e-mail: entra com usuário
 
     return {
         titulo: t('conta.titulo'),
@@ -27,9 +28,9 @@ export async function tela({ usuario, empresa, recarregar }) {
                             <input id="conta-nome" name="nome" value="${usuario.nome}" maxlength="120" required autocomplete="name">
                         </div>
                         <div class="campo">
-                            <label for="conta-email">${t('comum.email')}</label>
-                            <input id="conta-email" value="${usuario.email}" readonly aria-describedby="conta-email-dica">
-                            <p id="conta-email-dica" class="campo-dica">${t('conta.emailDica')}</p>
+                            <label for="conta-email">${login ? t('semEmail.usuario') : t('comum.email')}</label>
+                            <input id="conta-email" value="${login ?? usuario.email}" readonly aria-describedby="conta-email-dica">
+                            <p id="conta-email-dica" class="campo-dica">${login ? t('conta.usuarioDica') : t('conta.emailDica')}</p>
                         </div>
                         <dl class="ficha">
                             <div><dt>${t('comum.perfil')}</dt><dd>${t(`perfis.${usuario.perfil}`)}</dd></div>

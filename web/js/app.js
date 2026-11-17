@@ -276,6 +276,7 @@ const ROTAS = {
     ranking: { icone: 'trofeu', acao: 'ver-ranking', carregar: () => import('./telas/ranking.js') },
     relatorios: { icone: 'chart', acao: 'ver-relatorios', carregar: () => import('./telas/relatorios.js') },
     auditoria: { icone: 'list', acao: 'ver-auditoria', carregar: () => import('./telas/auditoria.js') },
+    divulgacao: { icone: 'send', acao: 'gerir-divulgacao', carregar: () => import('./telas/divulgacao.js') },
     marca: { icone: 'palette', acao: 'personalizar-marca', soEmpresa: true, carregar: () => import('./telas/marca.js') },
     conta: { icone: 'user', carregar: () => import('./telas/conta.js') },
     validar: { publica: true, carregar: () => import('./telas/validar.js') },
@@ -283,13 +284,21 @@ const ROTAS = {
     'nova-senha': { publica: true, funcao: 'telaNovaSenha', carregar: () => import('./telas/senha.js') },
 };
 
-const MENU = ['painel', 'empresas', 'pessoas', 'equipe', 'solicitacoes', 'cursos', 'cultura', 'kaizen', 'ranking', 'relatorios', 'auditoria', 'marca', 'conta'];
+const MENU = ['painel', 'empresas', 'pessoas', 'equipe', 'solicitacoes', 'cursos', 'cultura', 'kaizen', 'ranking', 'relatorios', 'auditoria', 'divulgacao', 'marca', 'conta'];
 
 /** Atalhos da barra inferior do celular (os primeiros que o perfil pode ver): a equipe gere, quem é da empresa estuda. */
 const ATALHOS_CELULAR = {
     equipe: ['painel', 'empresas', 'cultura', 'relatorios'],
     empresa: ['painel', 'cursos', 'kaizen', 'ranking'],
 };
+
+/** Rótulo na barra do celular: o curto (navCurto) quando o nome completo não cabe; o leitor de tela lê o completo. */
+function rotuloBarra(nome) {
+    const completo = t(`nav.${nome}`);
+    const curto = t(`navCurto.${nome}`);
+    if (curto === `navCurto.${nome}`) return html`<span>${completo}</span>`;
+    return html`<span aria-hidden="true">${curto}</span><span class="sr-only">${completo}</span>`;
+}
 
 /** Itens do menu que mostram um contador (o que espera uma ação). */
 const CONTADORES = { solicitacoes: 'solicitacoes', cultura: 'cultura', kaizen: 'kaizen' };
@@ -559,15 +568,18 @@ export function perguntar({ titulo, texto = '', confirmar, cancelar = t('comum.c
 
 // ----------------------------------------------------------- utilidades --
 
-/** Endereço completo de uma rota (para copiar links de convite e da empresa). */
+/**
+ * Endereço completo de uma rota (links de convite, da empresa, do certificado...). Usa o endereço
+ * do site configurado pelo administrador em Divulgação (o domínio); sem ele, o endereço aberto.
+ */
 export function enderecoDe(rota) {
-    return `${window.location.href.split('#')[0]}#/${rota}`;
+    return `${dados.enderecoSite()}#/${rota}`;
 }
 
-export async function copiarTexto(texto) {
+export async function copiarTexto(texto, mensagem = t('comum.linkCopiado')) {
     try {
         await navigator.clipboard.writeText(texto);
-        anunciar(t('comum.linkCopiado'));
+        anunciar(mensagem);
         return true;
     } catch {
         anunciar(t('comum.copiaFalhou'), 'erro');
@@ -582,8 +594,12 @@ export function baixarCsv(nomeArquivo, linhas) {
         const seguro = /^[=+\-@\t\r]/.test(texto) ? `'${texto}` : texto; // evita fórmula na planilha
         return `"${seguro.replace(/"/g, '""')}"`;
     };
-    const conteudo = `﻿${linhas.map((linha) => linha.map(celula).join(';')).join('\r\n')}`;
-    const url = URL.createObjectURL(new Blob([conteudo], { type: 'text/csv;charset=utf-8' }));
+    baixarArquivo(nomeArquivo, `﻿${linhas.map((linha) => linha.map(celula).join(';')).join('\r\n')}`, 'text/csv;charset=utf-8');
+}
+
+/** Baixa um arquivo gerado na hora (CSV, HTML do e-mail...). */
+export function baixarArquivo(nomeArquivo, conteudo, tipo) {
+    const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }));
     const link = document.createElement('a');
     link.href = url;
     link.download = nomeArquivo;
@@ -707,7 +723,7 @@ function montarShell(usuario, empresa, rotaAtual) {
                 </aside>
                 <main id="conteudo" class="principal" tabindex="-1"></main>
                 <nav class="barra-inferior" aria-label="${t('shell.atalhos')}">
-                    ${atalhos.map((nome) => html`<a class="barra-item" href="#/${nome}" data-rota="${nome}">${icone(ROTAS[nome].icone)}<span>${t(`nav.${nome}`)}</span>${contador(nome)}</a>`)}
+                    ${atalhos.map((nome) => html`<a class="barra-item" href="#/${nome}" data-rota="${nome}">${icone(ROTAS[nome].icone)}${rotuloBarra(nome)}${contador(nome)}</a>`)}
                     <button type="button" class="barra-item" data-acao="menu" aria-controls="menu-lateral" aria-expanded="false">${icone('grid')}<span>${t('shell.mais')}</span></button>
                 </nav>
             </div>`.texto;
@@ -1105,7 +1121,11 @@ async function iniciar() {
         const destino = retorno.erro ? `#/recuperar?erro=${encodeURIComponent(retorno.erro)}` : retorno.tipo === 'recovery' ? '#/nova-senha' : '#/painel';
         history.replaceState(null, '', `${window.location.pathname}${window.location.search}${destino}`);
     }
+    // A configuração (endereço do site para os links) chega junto com a sessão; sem sessão,
+    // a tela de entrada não espera por ela (só as telas internas montam links).
+    const configuracao = dados.carregarConfiguracao();
     await dados.iniciar();
+    if (await dados.usuarioAtual()) await configuracao;
     // Depois de uma ação o cache é limpo; as telas do menu voltam a ser preparadas por trás.
     dados.depoisDeEscrever(() => {
         preparadas.clear();

@@ -3,8 +3,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <!-- Só arquivos deste próprio site; a única exceção são os vídeos do YouTube em modo de privacidade (frame-src). -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://ehhksabwmdtpeyxxorwn.supabase.co; frame-src https://www.youtube-nocookie.com; base-uri 'self'; form-action 'self'; object-src 'none'">
+    <!-- Só arquivos deste próprio site; a única exceção são os vídeos do YouTube em modo de privacidade (frame-src).
+         O hash em script-src libera só o script de recarga automática do Live Server do VS Code (v5.7.10),
+         usado no desenvolvimento; qualquer outro script embutido continua bloqueado. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://ehhksabwmdtpeyxxorwn.supabase.co; frame-src https://www.youtube-nocookie.com; base-uri 'self'; form-action 'self'; object-src 'none'">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#071a20">

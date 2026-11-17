@@ -24,6 +24,7 @@ export async function tela({ consulta }) {
                 <button type="submit" class="botao botao--primario botao--largo">${t('senha.enviarLink')}</button>
             </form>
             <p class="nota-sucesso" data-enviado role="status" hidden>${t('senha.enviado')}</p>
+            <p class="nota">${t('senha.semEmailDica')}</p>
             <p class="login-rodape"><a href="#/login">${t('convite.irLogin')}</a></p>
         </div>`,
         montar(raiz) {

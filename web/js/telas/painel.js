@@ -1,7 +1,7 @@
 // Painel inicial. Muda conforme o perfil; tudo vem de dados.js (cursos, pontos, matrículas).
 
 import * as dados from '../dados.js';
-import { ehEquipe, podeEstudar, primeiroNome, pode, PONTOS, NIVEIS, ETAPAS_KAIZEN, codigoKaizen } from '../regras.js';
+import { ehEquipe, podeEstudar, primeiroNome, pode, pontuacaoDe, NIVEIS, ETAPAS_KAIZEN, codigoKaizen } from '../regras.js';
 import { t, tn, formatarNumero, formatarPercentual, formatarData, formatarRelativo } from '../textos.js';
 import { html, icone, avatar, fraseAtividade, capa, mapaSvg, desenharEm } from '../app.js';
 import { barraNota, seloLeitura } from '../graficos.js';
@@ -93,7 +93,7 @@ function blocoMeusCursos(cursos, titulo = t('painel.meusCursos')) {
     </section>`;
 }
 
-function blocoGamificacao(g) {
+function blocoGamificacao(g, pontos) {
     const niveis = t('gamificacao.niveis');
     const nome = niveis[g.nivel] ?? niveis[niveis.length - 1];
     const minimoAtual = NIVEIS[g.nivel] ?? 0;
@@ -119,7 +119,7 @@ function blocoGamificacao(g) {
                 <dd>${!g.desafio ? t('comum.semValor') : g.desafio.cumprido ? t('gamificacao.desafioCumprido') : t('gamificacao.desafioProgresso', { feito: g.desafio.feito, meta: g.desafio.meta })}</dd></div>
         </dl>
         <p class="bloco-nota">${g.desafio
-            ? html`${t('gamificacao.desafioTexto', { pontos: PONTOS.desafio })} <a href="#/cursos/${g.desafio.curso.id}">${g.desafio.curso.titulo}</a>`
+            ? html`${t('gamificacao.desafioTexto', { pontos: pontos.desafio })} <a href="#/cursos/${g.desafio.curso.id}">${g.desafio.curso.titulo}</a>`
             : t('gamificacao.desafioSem')}</p>
 
         <h3 class="subbloco-titulo">${t('gamificacao.conquistas')}</h3>
@@ -136,11 +136,11 @@ function blocoGamificacao(g) {
         <details class="regras-pontos">
             <summary>${t('gamificacao.regras')}</summary>
             <ul class="lista-marcada">
-                <li>${t('gamificacao.regraAula')}: +${PONTOS.aula}</li>
-                <li>${t('gamificacao.regraAvaliacao')}: +${PONTOS.avaliacao}</li>
-                <li>${t('gamificacao.regraNota')}: +${PONTOS.notaMaxima}</li>
-                <li>${t('gamificacao.regraCurso')}: +${PONTOS.curso}</li>
-                <li>${t('gamificacao.regraDesafio')}: +${PONTOS.desafio}</li>
+                <li>${t('gamificacao.regraAula')}: +${pontos.aula}</li>
+                <li>${t('gamificacao.regraAvaliacao')}: +${pontos.avaliacao}</li>
+                <li>${t('gamificacao.regraNota')}: +${pontos.notaMaxima}</li>
+                <li>${t('gamificacao.regraCurso')}: +${pontos.curso}</li>
+                <li>${t('gamificacao.regraDesafio')}: +${pontos.desafio}</li>
             </ul>
         </details>
     </section>`;
@@ -383,7 +383,8 @@ export async function tela({ usuario, empresa }) {
     const gere = pode(usuario, 'ver-relatorios');
     const gestor = usuario.perfil === 'company_admin';
     const equipe = ehEquipe(usuario.perfil);
-    // Blocos de cultura, kaizen e ranking são extras: se falharem, o painel continua.
+    // Blocos de pontos, cultura, kaizen e ranking são extras: se falharem, o painel continua
+    // (o Início do funcionário não pode cair por causa de um deles).
     const opcional = (promessa) => promessa.catch((erro) => {
         console.error(erro);
         return null;
@@ -394,7 +395,7 @@ export async function tela({ usuario, empresa }) {
         dados.resumoPainel(usuario),
         dados.atividadeRecente(usuario, 6),
         estuda ? dados.listarCursos(usuario) : [],
-        estuda && !gestor ? dados.perfilGamificacao(usuario) : null,
+        estuda && !gestor ? opcional(dados.perfilGamificacao(usuario)) : null,
         usuario.empresaId ? opcional(dados.rankingEmpresa({ periodo: 'mes' })) : null,
         gere ? dados.relatorio(usuario) : null,
         equipe ? opcional(dados.panoramaEmpresas()) : null,
@@ -428,7 +429,7 @@ export async function tela({ usuario, empresa }) {
     const lateral = [
         gestor ? html`<div data-cultura-empresa>${cultura === undefined ? blocoCulturaCarregando() : blocoCulturaEmpresa(cultura)}</div>` : '',
         gestor && kaizens ? blocoKaizen(kaizens, usuario) : '',
-        gamificacao ? blocoGamificacao(gamificacao) : '',
+        gamificacao ? blocoGamificacao(gamificacao, pontuacaoDe(empresa)) : '',
         ranking ? blocoRanking(ranking) : '',
         gere ? blocoAtividade(atividade) : '',
     ];

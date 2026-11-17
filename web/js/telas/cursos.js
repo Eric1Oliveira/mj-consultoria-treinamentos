@@ -4,7 +4,7 @@
 //        #/cursos/:id/aula/:aulaId · #/cursos/:id/avaliacao · #/certificado/:id
 
 import * as dados from '../dados.js';
-import { ehEquipe } from '../regras.js';
+import { ehEquipe, pode } from '../regras.js';
 import { t, formatarData } from '../textos.js';
 import { html, icone, opcao, avatar, anunciar, mostrarErro, desenharEm, capa, celebrar, perguntar, enderecoDe } from '../app.js';
 
@@ -786,11 +786,13 @@ function marcaCertificado(c) {
 
 export async function telaCertificado({ usuario, parametros }) {
     const c = await dados.obterCertificado(usuario, parametros[0] ?? '');
+    // O gestor (ou a equipe) abre o certificado de outra pessoa pelos relatórios: volta para lá.
+    const deOutraPessoa = c.usuarioId !== usuario.id && pode(usuario, 'ver-relatorios');
     return {
         titulo: `${t('certificado.titulo')} · ${c.curso}`,
         conteudo: html`
             <div class="sem-impressao">
-                <a class="voltar" href="#/cursos">${icone('back', 'icone icone--p')}${t('cursos.voltar')}</a>
+                <a class="voltar" href="${deOutraPessoa ? '#/relatorios' : '#/cursos'}">${icone('back', 'icone icone--p')}${deOutraPessoa ? t('relatorios.voltar') : t('cursos.voltar')}</a>
                 <header class="cabecalho cabecalho--acoes">
                     <h1 class="titulo" tabindex="-1">${t('certificado.titulo')}</h1>
                     <button type="button" class="botao botao--primario" data-imprimir>${icone('print')}${t('certificado.imprimir')}</button>

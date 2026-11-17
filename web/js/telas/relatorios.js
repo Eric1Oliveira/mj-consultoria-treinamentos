@@ -1,4 +1,5 @@
 // Relatórios: indicadores calculados das matrículas, por curso e por pessoa, com exportação CSV.
+// Quem concluiu tem o link do certificado (o gestor abre, imprime ou salva em PDF).
 // A lista por pessoa filtra e ordena na hora (sem ir ao servidor de novo).
 
 import * as dados from '../dados.js';
@@ -64,6 +65,7 @@ function tabelaPessoas(equipe, linhas) {
                 ${cabecalhoOrdenavel('situacao', t('comum.situacao'))}
                 ${cabecalhoOrdenavel('prazo', t('relatorios.prazo'))}
                 ${cabecalhoOrdenavel('ultima', t('relatorios.ultima'))}
+                <th scope="col">${t('relatorios.certificado')}</th>
             </tr></thead>
             <tbody>${visiveis.map((l) => html`<tr>
                 <th scope="row">${l.pessoa}${l.area ? html`<span class="linha-sub">${l.area}</span>` : ''}</th>
@@ -74,6 +76,9 @@ function tabelaPessoas(equipe, linhas) {
                 <td data-rotulo="${t('comum.situacao')}"><span class="selo ${SELO_SITUACAO[l.situacao]}">${t(`relatorios.situacoes.${l.situacao}`)}</span></td>
                 <td data-rotulo="${t('relatorios.prazo')}">${l.prazo ? html`<span class="${l.vencido ? 'texto-perigo' : ''}">${dataPrazo(l.prazo)}</span>` : t('comum.semValor')}</td>
                 <td data-rotulo="${t('relatorios.ultima')}"><time datetime="${l.ultimaAtividade}">${formatarRelativo(l.ultimaAtividade)}</time></td>
+                <td data-rotulo="${t('relatorios.certificado')}">${l.certificadoId
+                    ? html`<a class="botao botao--secundario botao--p" href="#/certificado/${l.certificadoId}">${icone('award', 'icone icone--p')}${t('relatorios.emitirCertificado')}<span class="sr-only"> – ${l.pessoa}, ${l.curso}</span></a>`
+                    : t('comum.semValor')}</td>
             </tr>`)}</tbody>
         </table>
     </div>`;

@@ -9,6 +9,7 @@ import * as sb from './supabase.js';
 import {
     ehEquipe, podeEstudar, pode, filtrarVisiveis, convitePendente,
     emailValido, gerarIdentificador, codigoYoutube, nivelPorPontos, sequenciaDias, marcaDe, indiceEngajamento,
+    emailInterno, usuarioValido, PONTOS, PONTOS_MAXIMO, normalizarSite,
 } from './regras.js';
 
 const CHAVE_PREFERENCIAS = 'mjc:preferencias';
@@ -188,9 +189,11 @@ export async function usuarioAtual() {
     return eu ? { ...eu } : null;
 }
 
+/** Entrar com e-mail ou, para quem não tem e-mail, com o usuário cadastrado pelo gestor. */
 export async function entrar(email, senha) {
+    const login = texto(email, 255).toLowerCase();
     try {
-        await sb.entrarComSenha(texto(email, 255).toLowerCase(), String(senha ?? ''));
+        await sb.entrarComSenha(login.includes('@') ? login : emailInterno(login), String(senha ?? ''));
     } catch {
         throw new ErroDados('credenciais');
     }
@@ -217,6 +220,8 @@ export function retornoDoAuth(hash) {
 /** Envia o e-mail de recuperação. Responde igual exista ou não a conta (não revela quem tem acesso). */
 export async function recuperarSenha(email) {
     const endereco = texto(email, 255).toLowerCase();
+    // Quem entra com usuário (sem e-mail) não recebe link: a nova senha vem do gestor.
+    if (endereco && !endereco.includes('@')) throw new ErroDados('validacao', { email: 'semEmailRecuperar' });
     if (!emailValido(endereco)) throw new ErroDados('validacao', { email: 'email' });
     try {
         await sb.recuperarSenha(endereco, window.location.href.split('#')[0]);
@@ -249,6 +254,59 @@ export async function listarEmpresasPublicas() {
         const e = camel(linha);
         return { id: e.id, nome: e.nome, identificador: e.identificador, ...marcaDe(e) };
     });
+}
+
+// -------------------------------------------------------------- divulgação --
+// Configuração mantida pelo administrador (tela Divulgação): endereço do site (o domínio),
+// WhatsApp e textos do e-mail. É pública e lida uma vez ao abrir o site.
+
+let configuracao = null;
+let configuracaoPromessa = null;
+
+/** Lê a configuração (uma vez). null se não der para ler (ex.: banco ainda sem a tabela): o site segue sem ela. */
+export async function carregarConfiguracao() {
+    configuracaoPromessa ??= sb.rpc('obter_configuracao').then((c) => {
+        configuracao = c ? camel(c) : null;
+        return configuracao;
+    });
+    try {
+        const c = await configuracaoPromessa;
+        return c ? { ...c } : null;
+    } catch (erro) {
+        console.warn('Configuração da divulgação indisponível:', erro);
+        configuracaoPromessa = null;
+        return null;
+    }
+}
+
+/**
+ * Endereço do site para montar links ("https://dominio/"): o configurado pelo administrador;
+ * sem ele, a pasta do endereço aberto agora. Todo link do site sai daqui.
+ */
+export function enderecoSite() {
+    return configuracao?.site || new URL('./', window.location.href.split('#')[0]).href;
+}
+
+export async function salvarConfiguracao(entrada) {
+    exigir(pode(atual(), 'gerir-divulgacao'));
+    const site = normalizarSite(entrada.site);
+    const whatsapp = String(entrada.whatsapp ?? '').replace(/\D/g, '');
+    const campos = {
+        whatsappMensagem: texto(entrada.whatsappMensagem, 300),
+        emailAssunto: texto(entrada.emailAssunto, 150),
+        emailTitulo: texto(entrada.emailTitulo, 200),
+        emailTexto: texto(entrada.emailTexto, 800),
+    };
+    const erros = {};
+    if (site === null) erros.site = 'site';
+    if (!/^\d{10,15}$/.test(whatsapp)) erros.whatsapp = 'whatsapp';
+    Object.entries(campos).forEach(([campo, valorCampo]) => {
+        if (!valorCampo) erros[campo] = 'obrigatorio';
+    });
+    if (Object.keys(erros).length) throw new ErroDados('validacao', erros);
+    configuracao = camel(await rpc('salvar_configuracao', { entrada: { site, whatsapp, ...campos } }));
+    configuracaoPromessa = Promise.resolve(configuracao);
+    return { ...configuracao };
 }
 
 // ------------------------------------------------------------ preferências --
@@ -430,6 +488,30 @@ export async function definirPerfilPessoa(_usuario, pessoaId, perfil) {
 export async function renomearPessoa(_usuario, pessoaId, nome) {
     atual();
     return camel(await rpc('renomear_pessoa', { p_pessoa: pessoaId, p_nome: nome ?? '' }));
+}
+
+/**
+ * Colaborador sem e-mail: o gestor (ou a consultoria) cadastra a pessoa com usuário e senha
+ * inicial. A conta já nasce ativa; depois é só atribuir os cursos como para qualquer funcionário.
+ */
+export async function cadastrarColaborador(_usuario, { empresaId, nome, usuario, area, senha }) {
+    atual();
+    const login = texto(usuario, 40).toLowerCase();
+    const erros = {};
+    if (!texto(nome, 120)) erros.nome = 'obrigatorio';
+    if (!usuarioValido(login)) erros.usuario = 'usuario';
+    if (String(senha ?? '').length < SENHA_MINIMA) erros.senha = 'senhaCurta';
+    if (Object.keys(erros).length) throw new ErroDados('validacao', erros, { min: SENHA_MINIMA });
+    return camel(await rpc('cadastrar_colaborador', {
+        entrada: { empresaId: empresaId || null, nome: texto(nome, 120), usuario: login, area: texto(area, 60), senha: String(senha) },
+    }));
+}
+
+/** Nova senha para um colaborador sem e-mail (ele não tem como recuperar a senha sozinho). */
+export async function redefinirSenhaColaborador(_usuario, pessoaId, senha) {
+    atual();
+    if (String(senha ?? '').length < SENHA_MINIMA) throw new ErroDados('validacao', { senha: 'senhaCurta' }, { min: SENHA_MINIMA });
+    await rpc('redefinir_senha_colaborador', { p_pessoa: pessoaId, p_senha: String(senha) });
 }
 
 // ------------------------------------------------------------------ convites --
@@ -793,7 +875,11 @@ export async function perfilGamificacao() {
     const [meus, minhasMatriculas, dmqsa] = await Promise.all([
         ler('pontos', `select=tipo,ref,valor,em&usuario_id=eq.${valor(usuario.id)}`),
         ler('matriculas', `select=curso_id,aulas_concluidas,tentativas,concluido_em&usuario_id=eq.${valor(usuario.id)}`).then((l) => l.map(camel)),
-        desafioDoMes(),
+        // O desafio é um extra: se não der para ler (ex.: banco ainda sem a coluna dmqsa), fica sem desafio.
+        desafioDoMes().catch((erro) => {
+            console.error(erro);
+            return null;
+        }),
     ]);
     const total = meus.reduce((soma, p) => soma + p.valor, 0);
     const aulas = minhasMatriculas.reduce((soma, m) => soma + m.aulasConcluidas.length, 0);
@@ -820,6 +906,24 @@ export async function perfilGamificacao() {
             cumprido: meus.some((p) => p.tipo === 'desafio' && p.ref === `dmqsa-${dmqsa.id}`),
         } : null,
     };
+}
+
+/**
+ * Pontuação do ranking da empresa (o gestor ajusta a da própria; a equipe, a de qualquer uma).
+ * `valores` = { aula: 10, ... }; {} volta tudo ao padrão. Vale para os pontos ganhos dali em diante.
+ */
+export async function salvarPontuacao(empresaId, valores) {
+    atual();
+    const erros = {};
+    const limpos = {};
+    for (const chave of Object.keys(PONTOS)) {
+        if (valores[chave] === undefined) continue;
+        const n = Number(String(valores[chave]).trim());
+        if (String(valores[chave]).trim() === '' || !Number.isInteger(n) || n < 0 || n > PONTOS_MAXIMO) erros[chave] = 'pontos';
+        else limpos[chave] = n;
+    }
+    if (Object.keys(erros).length) throw new ErroDados('validacao', erros, { max: PONTOS_MAXIMO });
+    return camel(await rpc('salvar_pontuacao', { p_empresa: empresaId || null, p_valores: limpos }));
 }
 
 /** O DMQSA (Diálogo Mensal de Qualidade e Segurança de Alimentos) mais recente que a pessoa pode fazer. */
@@ -951,7 +1055,7 @@ export async function relatorio(_usuario, { empresaId = '', cursoId = '' } = {})
                 empresa: nomeEmpresa(pessoa.empresaId), curso: c.titulo, cursoId: c.id,
                 progresso: p.percentual, nota: p.melhorNota, aprovado: p.aprovado, reprovacoes: m.tentativas.filter((t) => !t.aprovado).length,
                 situacao: m.concluidoEm ? 'concluido' : atrasado ? 'atrasado' : p.feitas === 0 ? 'naoIniciado' : 'andamento',
-                ultimaAtividade: m.ultimaAtividade, concluido: Boolean(m.concluidoEm),
+                ultimaAtividade: m.ultimaAtividade, concluido: Boolean(m.concluidoEm), certificadoId: m.certificadoId ?? null,
             };
         })
         .sort((a, b) => a.pessoa.localeCompare(b.pessoa) || a.curso.localeCompare(b.curso));

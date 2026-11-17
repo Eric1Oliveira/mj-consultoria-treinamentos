@@ -2,11 +2,50 @@
 // mesmo fora do top 10); a consultoria escolhe a empresa ou compara todas.
 
 import * as dados from '../dados.js';
-import { ehEquipe, PONTOS, primeiroNome } from '../regras.js';
+import { ehEquipe, pode, PONTOS, PONTOS_MAXIMO, pontuacaoDe, primeiroNome } from '../regras.js';
 import { t, tn, formatarNumero } from '../textos.js';
-import { html, icone, opcao, avatar } from '../app.js';
+import { html, icone, opcao, avatar, anunciar, mostrarErro, limparErros, desenharEm, perguntar } from '../app.js';
 
 const PERIODOS = ['semana', 'mes', 'total'];
+
+/** Cada ação que dá pontos e o texto dela (na ordem em que aparece). */
+const ACOES_PONTOS = {
+    aula: 'regraAula', avaliacao: 'regraAvaliacao', notaMaxima: 'regraNota', curso: 'regraCurso',
+    desafio: 'regraDesafio', kaizenIdeia: 'regraKaizenIdeia', kaizen: 'regraKaizen', diagnostico: 'regraDiagnostico',
+};
+
+/** "Como ganhar pontos": os valores que valem para a empresa (os ajustados por ela ou o padrão). */
+function listaPontos(pontos, { ajustada = false, podeAjustar = false, todas = false } = {}) {
+    return html`<div class="bloco-cabecalho bloco-cabecalho--linha">
+            <h2 id="ranking-regras-titulo" class="bloco-titulo">${t('gamificacao.regras')}</h2>
+            ${podeAjustar ? html`<button type="button" class="botao botao--secundario botao--p" data-pontuacao="editar">${t('ranking.ajustar')}</button>` : ''}
+        </div>
+        ${todas ? html`<p class="bloco-nota">${t('ranking.pontuacaoPadraoTodas')}</p>` : ajustada ? html`<p class="bloco-nota">${t('ranking.pontuacaoAjustada')}</p>` : ''}
+        <ul class="lista-marcada">
+            ${Object.entries(ACOES_PONTOS).map(([chave, texto]) => html`<li>${t(`gamificacao.${texto}`)}: +${pontos[chave]}</li>`)}
+        </ul>`;
+}
+
+/** Formulário do gestor: um valor por ação, com o padrão de cada uma como dica. */
+function formPontuacao(pontos) {
+    return html`<form class="formulario formulario--compacto" data-form="pontuacao" novalidate aria-labelledby="ranking-regras-titulo">
+        <h2 id="ranking-regras-titulo" class="bloco-titulo">${t('ranking.ajustarTitulo')}</h2>
+        <p class="bloco-nota">${t('ranking.ajustarNota')}</p>
+        <div class="pontuacao-campos">
+            ${Object.entries(ACOES_PONTOS).map(([chave, texto]) => html`<div class="campo pontuacao-campo">
+                <label for="pt-${chave}">${t(`gamificacao.${texto}`)}</label>
+                <input id="pt-${chave}" name="${chave}" type="number" min="0" max="${PONTOS_MAXIMO}" step="1" inputmode="numeric" value="${pontos[chave]}" required aria-describedby="pt-${chave}-dica">
+                <p id="pt-${chave}-dica" class="campo-dica">${t('ranking.padrao', { n: PONTOS[chave] })}</p>
+            </div>`)}
+        </div>
+        <p class="campo-erro" data-resumo-erro role="alert" hidden></p>
+        <div class="acoes acoes--p">
+            <button type="submit" class="botao botao--primario botao--p">${t('ranking.salvarPontuacao')}</button>
+            <button type="button" class="botao botao--secundario botao--p" data-pontuacao="cancelar">${t('comum.cancelar')}</button>
+            <button type="button" class="botao botao--fantasma botao--p" data-pontuacao="padrao">${t('ranking.voltarPadrao')}</button>
+        </div>
+    </form>`;
+}
 
 function linhaRanking(r, equipe) {
     return html`<li class="ranking-item ${r.voce ? 'ranking-item--voce' : ''}">
@@ -34,15 +73,21 @@ function podio(itens) {
     </ol>`;
 }
 
-export async function tela({ usuario, consulta }) {
+export async function tela({ usuario, empresa, consulta, recarregar }) {
     const equipe = ehEquipe(usuario.perfil);
     const periodo = PERIODOS.includes(consulta.get('periodo')) ? consulta.get('periodo') : 'mes';
     const empresaId = equipe ? consulta.get('empresa') ?? '' : '';
-    const [r, empresas, desafio] = await Promise.all([
+    const [r, empresas, desafio, escolhida] = await Promise.all([
         dados.rankingEmpresa({ periodo, empresaId }),
         equipe ? dados.listarEmpresas(usuario, { situacao: 'ativas' }) : [],
         equipe ? null : dados.perfilGamificacao().then((g) => g.desafio).catch(() => null),
+        equipe && empresaId ? dados.obterEmpresa(empresaId).catch(() => null) : empresa,
     ]);
+    // Pontuação que vale: a da empresa (a equipe vê a da empresa escolhida; em "todas", o padrão).
+    const pontos = pontuacaoDe(escolhida);
+    const ajustada = Object.keys(escolhida?.pontuacao ?? {}).length > 0;
+    const podeAjustar = Boolean(escolhida) && pode(usuario, 'ajustar-pontuacao', { empresaId: escolhida.id });
+    const opcoesLista = { ajustada, podeAjustar, todas: equipe && !empresaId };
     const alguemPontuou = r.itens.some((x) => x.pontos > 0);
     const foraDoTop = r.voce && !r.itens.some((x) => x.voce) ? r.voce : null;
     const maiorArea = Math.max(1, ...r.areas.map((a) => a.media));
@@ -87,7 +132,7 @@ export async function tela({ usuario, consulta }) {
                 <div class="painel-coluna painel-coluna--lateral">
                     ${equipe ? '' : html`<section class="painel-bloco desafio-mes" aria-labelledby="desafio-mes-titulo">
                         <h2 id="desafio-mes-titulo" class="bloco-titulo">${icone('target', 'icone icone--p')}${t('gamificacao.desafio')}</h2>
-                        <p class="bloco-nota">${t('gamificacao.desafioTexto', { pontos: PONTOS.desafio })}</p>
+                        <p class="bloco-nota">${t('gamificacao.desafioTexto', { pontos: pontos.desafio })}</p>
                         ${desafio ? html`
                             <p class="desafio-mes-curso">${desafio.curso.titulo}</p>
                             ${desafio.cumprido
@@ -112,19 +157,7 @@ export async function tela({ usuario, consulta }) {
                             </span>
                         </li>`)}</ol>
                     </section>` : ''}
-                    <section class="painel-bloco painel-bloco--sutil" aria-labelledby="ranking-regras-titulo">
-                        <h2 id="ranking-regras-titulo" class="bloco-titulo">${t('gamificacao.regras')}</h2>
-                        <ul class="lista-marcada">
-                            <li>${t('gamificacao.regraAula')}: +${PONTOS.aula}</li>
-                            <li>${t('gamificacao.regraAvaliacao')}: +${PONTOS.avaliacao}</li>
-                            <li>${t('gamificacao.regraNota')}: +${PONTOS.notaMaxima}</li>
-                            <li>${t('gamificacao.regraCurso')}: +${PONTOS.curso}</li>
-                            <li>${t('gamificacao.regraDesafio')}: +${PONTOS.desafio}</li>
-                            <li>${t('gamificacao.regraKaizenIdeia')}: +${PONTOS.kaizenIdeia}</li>
-                            <li>${t('gamificacao.regraKaizen')}: +${PONTOS.kaizen}</li>
-                            <li>${t('gamificacao.regraDiagnostico')}: +${PONTOS.diagnostico}</li>
-                        </ul>
-                    </section>
+                    <section class="painel-bloco painel-bloco--sutil" aria-labelledby="ranking-regras-titulo" data-pontos>${listaPontos(pontos, opcoesLista)}</section>
                 </div>
             </div>`,
         montar(raiz) {
@@ -133,6 +166,42 @@ export async function tela({ usuario, consulta }) {
                 window.location.hash = `#/ranking?periodo=${periodo}${form.empresa.value ? `&empresa=${form.empresa.value}` : ''}`;
             });
             form?.addEventListener('submit', (evento) => evento.preventDefault());
+            if (podeAjustar) ligarPontuacao(raiz.querySelector('[data-pontos]'), { empresaId: escolhida.id, pontos, opcoesLista, recarregar });
         },
     };
+}
+
+/** Ajuste da pontuação pelo gestor (ou pela equipe, na empresa escolhida). */
+function ligarPontuacao(bloco, { empresaId, pontos, opcoesLista, recarregar }) {
+    const salvar = async (valores, mensagem, form = null) => {
+        try {
+            await dados.salvarPontuacao(empresaId, valores);
+            anunciar(mensagem);
+            await recarregar();
+        } catch (erro) {
+            mostrarErro(erro, form);
+        }
+    };
+    bloco.addEventListener('click', async (evento) => {
+        const botao = evento.target.closest('[data-pontuacao]');
+        if (!botao) return;
+        if (botao.dataset.pontuacao === 'editar') {
+            desenharEm(bloco, formPontuacao(pontos));
+            bloco.querySelector('input')?.focus();
+        } else if (botao.dataset.pontuacao === 'cancelar') {
+            desenharEm(bloco, listaPontos(pontos, opcoesLista));
+            bloco.querySelector('[data-pontuacao="editar"]')?.focus();
+        } else if (botao.dataset.pontuacao === 'padrao') {
+            const ok = await perguntar({ titulo: t('ranking.voltarPadraoTitulo'), texto: t('ranking.ajustarNota'), confirmar: t('ranking.voltarPadrao') });
+            if (ok) await salvar({}, t('ranking.pontuacaoPadraoSalva'));
+        }
+    });
+    bloco.addEventListener('submit', async (evento) => {
+        const form = evento.target.closest('[data-form="pontuacao"]');
+        if (!form) return;
+        evento.preventDefault();
+        limparErros(form);
+        const valores = Object.fromEntries(Object.keys(ACOES_PONTOS).map((chave) => [chave, form.elements[chave].value]));
+        await salvar(valores, t('ranking.pontuacaoSalva'), form);
+    });
 }

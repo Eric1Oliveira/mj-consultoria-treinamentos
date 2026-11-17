@@ -80,6 +80,15 @@ export function pode(usuario, acao, alvo = {}) {
             return ehEquipe(perfil);
         case 'definir-area':
             return podeGerirPessoa(usuario, alvo.pessoa) || (perfil === 'company_admin' && alvo.pessoa?.id === usuario.id);
+        case 'gerir-divulgacao':
+            return perfil === 'admin';
+        case 'ajustar-pontuacao':
+            if (ehEquipe(perfil)) return Boolean(alvo.empresaId);
+            return perfil === 'company_admin'
+                && (alvo.empresaId === undefined || alvo.empresaId === usuario.empresaId);
+        case 'redefinir-senha':
+            // Só nas contas sem e-mail (usuário e senha): quem tem e-mail recupera a senha sozinho.
+            return Boolean(usuarioInterno(alvo.pessoa?.email)) && podeGerirPessoa(usuario, alvo.pessoa);
         default:
             return false;
     }
@@ -264,6 +273,80 @@ export function emailValido(email) {
     return typeof email === 'string' && email.length <= 255 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 }
 
+// ---------------------------------------------- colaborador sem e-mail --
+// Quem não tem e-mail entra com usuário e senha. A conta de acesso usa um endereço interno
+// num domínio reservado (.invalid nunca recebe e-mail); o mesmo do servidor.
+
+export const DOMINIO_INTERNO = 'sem-email.invalid';
+
+/** Usuário: 3 a 40 caracteres, minúsculas, números, ponto, hífen e sublinhado (começa por letra ou número). */
+export function usuarioValido(texto) {
+    return typeof texto === 'string' && /^[a-z0-9][a-z0-9._-]{2,39}$/.test(texto);
+}
+
+export function emailInterno(usuario) {
+    return `${String(usuario ?? '').trim().toLowerCase()}@${DOMINIO_INTERNO}`;
+}
+
+/** O usuário de uma conta sem e-mail (ou null, se a conta tem e-mail de verdade). */
+export function usuarioInterno(email) {
+    const sufixo = `@${DOMINIO_INTERNO}`;
+    return typeof email === 'string' && email.endsWith(sufixo) ? email.slice(0, -sufixo.length) : null;
+}
+
+/** "Maria da Silva" → "maria.silva" (sugestão; o gestor pode trocar por matrícula ou CPF). */
+export function sugerirUsuario(nome) {
+    const partes = String(nome || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+        .replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter(Boolean);
+    if (!partes.length) return '';
+    const curtas = new Set(['da', 'de', 'do', 'das', 'dos', 'e']);
+    const ultimo = [...partes].reverse().find((p, i) => i < partes.length - 1 && !curtas.has(p));
+    return [partes[0], ultimo].filter(Boolean).join('.').slice(0, 40);
+}
+
+/** Senha inicial fácil de ditar: 10 caracteres sem os que se confundem (0/O, 1/l/I). */
+export function gerarSenhaInicial() {
+    const letras = 'abcdefghjkmnpqrstuvwxyz23456789';
+    const sorteio = crypto.getRandomValues(new Uint32Array(10));
+    return Array.from(sorteio, (n) => letras[n % letras.length]).join('');
+}
+
+// ------------------------------------------------------------- divulgação --
+
+/**
+ * Endereço do site (o domínio) no formato que os links usam: "mjalimentos.com.br" →
+ * "https://mjalimentos.com.br/". Vazio = '' (usa o endereço aberto). null se não for válido.
+ */
+export function normalizarSite(texto) {
+    let bruto = String(texto ?? '').trim();
+    if (!bruto) return '';
+    if (!/^https?:\/\//i.test(bruto)) bruto = `https://${bruto}`;
+    let url;
+    try {
+        url = new URL(bruto);
+    } catch {
+        return null;
+    }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return null;
+    if (url.hostname !== 'localhost' && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(url.hostname)) return null;
+    // Só a pasta do site: tira "index.html" (ou outra página), consulta e #.
+    const pasta = url.pathname.replace(/[^/]*\.html?$/i, '').replace(/\/*$/, '/');
+    const site = `${url.protocol}//${url.host}${pasta}`;
+    return site.length <= 200 ? site : null;
+}
+
+/** "5511978042160" → "(11) 97804-2160" (outros países: "+número"). */
+export function formatarWhatsapp(numero) {
+    const n = String(numero ?? '').replace(/\D/g, '');
+    const br = n.match(/^55(\d{2})(\d{4,5})(\d{4})$/);
+    return br ? `(${br[1]}) ${br[2]}-${br[3]}` : `+${n}`;
+}
+
+export function linkWhatsapp(numero, mensagem = '') {
+    const n = String(numero ?? '').replace(/\D/g, '');
+    return `https://wa.me/${n}${mensagem ? `?text=${encodeURIComponent(mensagem)}` : ''}`;
+}
+
 export function identificadorValido(texto) {
     return typeof texto === 'string' && texto.length <= 60 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(texto);
 }
@@ -310,6 +393,21 @@ export function cursoCompleto(curso, matricula) {
  * kaizen (padronizado) é premiado uma vez por ano para cada pessoa.
  */
 export const PONTOS = { aula: 10, avaliacao: 30, notaMaxima: 20, curso: 50, desafio: 50, kaizenIdeia: 10, kaizen: 60, diagnostico: 15 };
+
+/** Pontos de cada ação: no máximo este valor (o servidor confere). */
+export const PONTOS_MAXIMO = 1000;
+
+/**
+ * Pontuação que vale para a empresa: a que o gestor ajustou (empresas.pontuacao) e, no que
+ * ele não mexeu, o padrão. Vale para os pontos ganhos dali em diante.
+ */
+export function pontuacaoDe(empresa) {
+    const ajustes = empresa?.pontuacao && typeof empresa.pontuacao === 'object' ? empresa.pontuacao : {};
+    return Object.fromEntries(Object.entries(PONTOS).map(([chave, padrao]) => {
+        const n = Number(ajustes[chave]);
+        return [chave, Number.isInteger(n) && n >= 0 && n <= PONTOS_MAXIMO ? n : padrao];
+    }));
+}
 
 /** Pontos mínimos de cada nível (os nomes ficam em textos.js). */
 export const NIVEIS = [0, 100, 250, 500, 1000];

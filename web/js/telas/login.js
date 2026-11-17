@@ -1,4 +1,5 @@
-// Login com e-mail e senha (Supabase Auth). Contas novas entram por convite.
+// Login com e-mail (ou usuário, para quem não tem e-mail) e senha (Supabase Auth).
+// Contas novas entram por convite ou pelo cadastro do gestor (colaborador sem e-mail).
 
 import * as dados from '../dados.js';
 import { t } from '../textos.js';
@@ -39,7 +40,8 @@ export async function tela() {
                     <form data-form="login" novalidate>
                         <div class="campo">
                             <label for="login-email">${t('login.email')}</label>
-                            <input id="login-email" name="email" type="email" autocomplete="username" required spellcheck="false" autocapitalize="none">
+                            <input id="login-email" name="email" type="text" inputmode="email" autocomplete="username" required spellcheck="false" autocapitalize="none" aria-describedby="login-email-dica">
+                            <p id="login-email-dica" class="campo-dica">${t('login.emailDica')}</p>
                         </div>
                         <div class="campo">
                             <label for="login-senha">${t('login.senha')}</label>
@@ -72,7 +74,7 @@ export async function tela() {
                     erro.textContent = t('login.erro');
                     erro.hidden = false;
                     email.setAttribute('aria-invalid', 'true');
-                    email.setAttribute('aria-describedby', 'login-erro');
+                    email.setAttribute('aria-describedby', 'login-email-dica login-erro');
                     email.focus();
                 } finally {
                     enviar.disabled = false;

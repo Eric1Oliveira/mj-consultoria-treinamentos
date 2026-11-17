@@ -3,7 +3,9 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'none'; base-uri 'self'; form-action 'none'; object-src 'none'">
+    <!-- Só arquivos deste site; connect-src: o contato de WhatsApp vem da configuração no Supabase.
+         O hash libera só a recarga automática do Live Server (desenvolvimento). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'self' 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE='; connect-src 'self' https://ehhksabwmdtpeyxxorwn.supabase.co; base-uri 'self'; form-action 'none'; object-src 'none'">
     <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#3d4a1d">
@@ -13,12 +15,13 @@
     <link rel="preload" href="fonts/bricolage-grotesque-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="fonts/instrument-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="css/divulgacao.css">
+    <script type="module" src="js/pagina-divulgacao.js"></script>
 </head>
 <body>
     <!--
-        Página de divulgação para novos clientes (link para mandar por e-mail).
-        Para mudar o contato, troque o número em todos os links wa.me (DDI 55 + DDD + número).
-        O modelo de e-mail que aponta para esta página está em email-divulgacao.html.
+        Página de divulgação para novos clientes (o link vai no e-mail de divulgação).
+        O WhatsApp é o da configuração que o administrador mantém na plataforma (menu Divulgação),
+        e o e-mail para novos clientes também sai de lá. O número escrito aqui só vale sem conexão.
     -->
     <a class="pular" href="#conteudo">Pular para o conteúdo</a>
 
@@ -39,7 +42,7 @@
                     <h1 class="manchete">Cultura de segurança de alimentos se mede. <em>E sobe de nível.</em></h1>
                     <p class="abertura-apoio">Uma plataforma com a marca da sua empresa para treinar a equipe, medir a cultura de qualidade e segurança de alimentos e acompanhar cada ação de melhoria, com a avaliação da MJ Alimentos Seguros.</p>
                     <div class="abertura-acoes">
-                        <a class="botao botao--primario" href="https://wa.me/5511978042160?text=Ol%C3%A1!%20Quero%20conhecer%20a%20plataforma%20da%20MJ%20Alimentos%20Seguros." rel="noopener" target="_blank">Agendar uma apresentação</a>
+                        <a class="botao botao--primario" data-whatsapp href="https://wa.me/5511978042160?text=Ol%C3%A1!%20Quero%20conhecer%20a%20plataforma%20da%20MJ%20Alimentos%20Seguros." rel="noopener" target="_blank">Agendar uma apresentação</a>
                         <a class="botao botao--linha" href="#como-funciona">Ver como funciona</a>
                     </div>
                     <p class="abertura-normas">Baseado em GFSI · FSSC 22000 · BRCGS · IFS · ISO 22000</p>
@@ -103,7 +106,7 @@
                     <li class="passo">
                         <span class="passo-n" aria-hidden="true">1</span>
                         <h3>Sua empresa entra na plataforma</h3>
-                        <p>Com o seu logotipo e as suas cores. Os colaboradores recebem o convite por e-mail.</p>
+                        <p>Com o seu logotipo e as suas cores. Os colaboradores recebem o convite por e-mail ou, quem não tem e-mail, entram com usuário e senha.</p>
                     </li>
                     <li class="passo">
                         <span class="passo-n" aria-hidden="true">2</span>
@@ -131,8 +134,8 @@
                     <p>Fale com a MJ Alimentos Seguros e veja a plataforma funcionando com o exemplo de uma indústria como a sua.</p>
                 </div>
                 <div class="chamada-acoes">
-                    <a class="botao botao--etiqueta" href="https://wa.me/5511978042160?text=Ol%C3%A1!%20Quero%20conhecer%20a%20plataforma%20da%20MJ%20Alimentos%20Seguros." rel="noopener" target="_blank">Falar no WhatsApp</a>
-                    <p class="chamada-telefone">(11) 97804-2160</p>
+                    <a class="botao botao--etiqueta" data-whatsapp href="https://wa.me/5511978042160?text=Ol%C3%A1!%20Quero%20conhecer%20a%20plataforma%20da%20MJ%20Alimentos%20Seguros." rel="noopener" target="_blank">Falar no WhatsApp</a>
+                    <p class="chamada-telefone" data-telefone>(11) 97804-2160</p>
                 </div>
             </div>
         </section>

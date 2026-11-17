@@ -162,6 +162,10 @@ alter table public.certificados add column if not exists empresa_id uuid referen
 update public.certificados c set empresa_id = p.empresa_id
   from public.perfis p where p.id = c.usuario_id and c.empresa_id is null and p.empresa_id is not null;
 
+-- Pontuação do ranking ajustada pela empresa: { "aula": 10, "kaizenIdeia": 10, ... }.
+-- O que não estiver aqui vale o padrão. Muda só os pontos ganhos dali em diante.
+alter table public.empresas add column if not exists pontuacao jsonb not null default '{}' check (jsonb_typeof(pontuacao) = 'object');
+
 -- --------------------------------------------- cultura e maturidade --
 -- Modelos de diagnóstico (questionários de referência, baseados em normas).
 -- dimensoes: [{ id, nome, descricao, recomendacao, cursos: [uuid] }]
@@ -331,6 +335,33 @@ create table if not exists public.plano (
 );
 insert into public.plano (id) values (true) on conflict do nothing;
 
+-- ------------------------------------------------------------- divulgação --
+-- Uma linha só, mantida pelo administrador na tela Divulgação do site:
+--   site = endereço do site (o domínio). Todos os links que o site monta (convites, acesso de
+--          quem não tem e-mail, validação do certificado, página de divulgação, e-mail) usam este
+--          endereço. Vazio = o endereço em que o site está aberto.
+--   whatsapp / whatsapp_mensagem = contato da página de divulgação e do e-mail.
+--   email_* = textos do e-mail para novos clientes.
+-- Lida pela função obter_configuracao (pública: nada aqui é sigiloso); gravada só pelo admin.
+create table if not exists public.configuracao (
+    id                boolean primary key default true check (id),
+    site              text not null default ''
+                      check (site = '' or (char_length(site) <= 200 and site ~* '^https?://[a-z0-9.-]+(:[0-9]{1,5})?(/[^\s?#]*)?/$')),
+    whatsapp          text not null default '5511978042160' check (whatsapp ~ '^[0-9]{10,15}$'),
+    whatsapp_mensagem text not null default 'Olá! Quero conhecer a plataforma da MJ Alimentos Seguros.'
+                      check (char_length(whatsapp_mensagem) between 1 and 300),
+    email_assunto     text not null default 'Conheça a plataforma da MJ Alimentos Seguros'
+                      check (char_length(email_assunto) between 1 and 150),
+    email_titulo      text not null default 'Em que nível está a cultura de segurança de alimentos da sua fábrica?'
+                      check (char_length(email_titulo) between 1 and 200),
+    email_texto       text not null default 'A MJ Alimentos Seguros tem uma plataforma, com a marca da sua empresa, para medir a cultura de qualidade e segurança de alimentos e transformar o resultado em ações acompanhadas no dia a dia:'
+                      check (char_length(email_texto) between 1 and 800),
+    atualizado_em     timestamptz not null default now(),
+    atualizado_por    uuid references public.perfis (id) on delete set null
+);
+insert into public.configuracao (id) values (true) on conflict do nothing;
+alter table public.configuracao enable row level security; -- sem política: só pelas funções
+
 -- ------------------------------------------------------- funções auxiliares --
 
 -- Perfil de quem está logado, só se a conta e a empresa estiverem ativas.
@@ -418,6 +449,7 @@ create or replace function public._bloqueio_email(p_email text) returns text
 language sql stable security definer set search_path = public as $$
     select case
         when not coalesce(_email_valido(p_email), false) then 'email'
+        when p_email like '%@sem-email.invalid' then 'email' -- endereço interno das contas sem e-mail
         when exists (select 1 from perfis where email = p_email) then 'contaExiste'
         when exists (select 1 from convites c where c.email = p_email and _convite_pendente(c)) then 'convitePendente'
         else null end
@@ -450,11 +482,18 @@ language sql stable as $$
     select c.ativo and p.perfil in ('student', 'company_admin') and p.empresa_id = any (c.empresas)
 $$;
 
+-- p_valor é o padrão; se a empresa da pessoa ajustou a pontuação desta ação, vale o dela.
 create or replace function public._somar_pontos(p_usuario uuid, p_tipo text, p_ref text, p_valor int) returns int
 language plpgsql security definer set search_path = public as $$
-declare v int;
+declare
+    v int;
+    v_valor int := p_valor;
+    v_ajuste text;
 begin
-    insert into pontos (usuario_id, tipo, ref, valor) values (p_usuario, p_tipo, p_ref, p_valor)
+    select e.pontuacao ->> (case p_tipo when 'kaizen_ideia' then 'kaizenIdeia' else p_tipo end) into v_ajuste
+      from perfis p join empresas e on e.id = p.empresa_id where p.id = p_usuario;
+    if v_ajuste ~ '^[0-9]{1,4}$' then v_valor := least(v_ajuste::int, 1000); end if;
+    insert into pontos (usuario_id, tipo, ref, valor) values (p_usuario, p_tipo, p_ref, v_valor)
     on conflict (usuario_id, tipo, ref) do nothing returning valor into v;
     return coalesce(v, 0);
 end $$;
@@ -600,6 +639,40 @@ revoke all on all tables in schema public from anon, authenticated;
 grant select on all tables in schema public to authenticated;
 
 -- ------------------------------------------------------- RPC: área pública --
+
+-- Configuração da divulgação (endereço do site, WhatsApp, textos do e-mail). Pública: a
+-- página de divulgação lê o contato daqui, e o site monta os links com o endereço.
+create or replace function public.obter_configuracao() returns jsonb
+language sql stable security definer set search_path = public as $$
+    select to_jsonb(c) - 'id' - 'atualizado_por' from configuracao c where c.id
+$$;
+
+-- Só o administrador muda a configuração da divulgação.
+create or replace function public.salvar_configuracao(entrada jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+    v_eu perfis := _exigir_eu();
+    v_site text := _texto(entrada ->> 'site', 200);
+    v_whatsapp text := regexp_replace(coalesce(entrada ->> 'whatsapp', ''), '\D', '', 'g');
+    erros jsonb := '{}';
+    c configuracao;
+begin
+    if v_eu.perfil <> 'admin' then perform _erro('proibido'); end if;
+    if v_site <> '' and v_site !~* '^https?://[a-z0-9.-]+(:[0-9]{1,5})?(/[^\s?#]*)?/$' then erros := erros || '{"site":"site"}'; end if;
+    if v_whatsapp !~ '^[0-9]{10,15}$' then erros := erros || '{"whatsapp":"whatsapp"}'; end if;
+    if _texto(entrada ->> 'whatsappMensagem', 300) = '' then erros := erros || '{"whatsappMensagem":"obrigatorio"}'; end if;
+    if _texto(entrada ->> 'emailAssunto', 150) = '' then erros := erros || '{"emailAssunto":"obrigatorio"}'; end if;
+    if _texto(entrada ->> 'emailTitulo', 200) = '' then erros := erros || '{"emailTitulo":"obrigatorio"}'; end if;
+    if _texto(entrada ->> 'emailTexto', 800) = '' then erros := erros || '{"emailTexto":"obrigatorio"}'; end if;
+    if erros <> '{}' then perform _erro('validacao', erros); end if;
+    update configuracao set
+        site = v_site, whatsapp = v_whatsapp, whatsapp_mensagem = _texto(entrada ->> 'whatsappMensagem', 300),
+        email_assunto = _texto(entrada ->> 'emailAssunto', 150), email_titulo = _texto(entrada ->> 'emailTitulo', 200),
+        email_texto = _texto(entrada ->> 'emailTexto', 800), atualizado_em = now(), atualizado_por = v_eu.id
+    where id returning * into c;
+    perform _registrar('configuracao.salva', v_eu, null, v_site);
+    return to_jsonb(c) - 'id' - 'atualizado_por';
+end $$;
 
 create or replace function public.listar_empresas_publicas() returns jsonb
 language sql stable security definer set search_path = public as $$
@@ -836,6 +909,75 @@ begin
     update perfis set nome = _texto(p_nome, 120) where id = p_pessoa returning * into v;
     perform _registrar('pessoa.editada', v_eu, v.empresa_id, v.nome);
     return to_jsonb(v);
+end $$;
+
+-- ------------------------------------------------- colaborador sem e-mail --
+-- Quem não tem e-mail entra com usuário e senha. O gestor (ou a consultoria) cadastra a
+-- pessoa e a senha inicial; a conta de acesso é criada aqui mesmo, já confirmada, com o
+-- endereço interno <usuário>@sem-email.invalid (domínio reservado: nunca recebe e-mail).
+-- Não passa pelo convite nem pelo envio de e-mail do Supabase.
+create or replace function public.cadastrar_colaborador(entrada jsonb) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+    v_eu perfis := _exigir_eu();
+    e empresas;
+    v_nome text := _texto(entrada ->> 'nome', 120);
+    v_usuario text := lower(_texto(entrada ->> 'usuario', 40));
+    v_senha text := coalesce(entrada ->> 'senha', '');
+    v_email text;
+    v_id uuid := gen_random_uuid();
+    erros jsonb := '{}';
+    v perfis;
+begin
+    select * into e from empresas
+     where id = case when v_eu.perfil = 'company_admin' then v_eu.empresa_id else nullif(entrada ->> 'empresaId', '')::uuid end;
+    if not _pode_convidar(v_eu, 'student', e) then perform _erro('proibido'); end if;
+    if v_nome = '' then erros := erros || '{"nome":"obrigatorio"}'; end if;
+    if v_usuario !~ '^[a-z0-9][a-z0-9._-]{2,39}$' then
+        erros := erros || '{"usuario":"usuario"}';
+    else
+        v_email := v_usuario || '@sem-email.invalid';
+        if exists (select 1 from auth.users where lower(email) = v_email) or exists (select 1 from perfis where email = v_email) then
+            erros := erros || '{"usuario":"usuarioEmUso"}';
+        end if;
+    end if;
+    if char_length(v_senha) < 8 or char_length(v_senha) > 72 then erros := erros || '{"senha":"senhaCurta"}'; end if;
+    if erros <> '{}' then perform _erro('validacao', erros); end if;
+
+    insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            confirmation_token, recovery_token, email_change_token_new, email_change)
+    values ('00000000-0000-0000-0000-000000000000', v_id, 'authenticated', 'authenticated', v_email,
+            crypt(v_senha, gen_salt('bf', 10)), now(),
+            '{"provider":"email","providers":["email"]}', '{"sem_email":true}', now(), now(), '', '', '', '');
+    insert into auth.identities (id, provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), v_id::text, v_id,
+            jsonb_build_object('sub', v_id::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
+            'email', null, now(), now());
+    insert into perfis (id, nome, email, perfil, empresa_id, area)
+    values (v_id, v_nome, v_email, 'student', e.id, _texto(entrada ->> 'area', 60))
+    returning * into v;
+    perform _registrar('pessoa.cadastrada', v_eu, e.id, v.nome);
+    return to_jsonb(v);
+end $$;
+
+-- Nova senha para um colaborador sem e-mail (quem tem e-mail recupera a senha pelo link).
+-- As sessões abertas da pessoa terminam: ela entra de novo com a senha nova.
+create or replace function public.redefinir_senha_colaborador(p_pessoa uuid, p_senha text) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare v_eu perfis := _exigir_eu(); v perfis;
+begin
+    select * into v from perfis where id = p_pessoa;
+    if v.id is null then perform _erro('nao-encontrado'); end if;
+    if not _pode_gerir_pessoa(v_eu, v) or v.email not like '%@sem-email.invalid' then perform _erro('proibido'); end if;
+    if char_length(coalesce(p_senha, '')) < 8 or char_length(p_senha) > 72 then perform _erro('validacao', '{"senha":"senhaCurta"}'); end if;
+    update auth.users set encrypted_password = crypt(p_senha, gen_salt('bf', 10)), updated_at = now() where id = v.id;
+    begin
+        delete from auth.sessions where user_id = v.id;
+    exception when insufficient_privilege or undefined_table then
+        null; -- sem acesso às sessões: a senha muda do mesmo jeito
+    end;
+    perform _registrar('pessoa.senha', v_eu, v.empresa_id, v.nome);
 end $$;
 
 -- --------------------------------------------------------- RPC: convites --
@@ -1218,6 +1360,35 @@ begin
                   from ordenado where area <> '' and v_empresa is not null group by area) a)
     ) into v;
     return v;
+end $$;
+
+-- Pontuação do ranking da empresa: o gestor ajusta a da própria; a equipe, a de qualquer uma.
+-- p_valores = { "aula": 10, ... } com inteiros de 0 a 1000; {} volta tudo ao padrão.
+-- Os pontos já ganhos não mudam: o novo valor vale para as próximas ações.
+create or replace function public.salvar_pontuacao(p_empresa uuid, p_valores jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+    v_eu perfis := _exigir_eu();
+    e empresas;
+    v_saida jsonb := '{}';
+    k text;
+begin
+    select * into e from empresas where id = case when v_eu.perfil = 'company_admin' then v_eu.empresa_id else p_empresa end;
+    if e.id is null then perform _erro('nao-encontrado'); end if;
+    if not (v_eu.perfil in ('admin', 'consultant') or (v_eu.perfil = 'company_admin' and v_eu.empresa_id = e.id)) then
+        perform _erro('proibido');
+    end if;
+    if jsonb_typeof(p_valores) is distinct from 'object' then perform _erro('validacao', '{"pontuacao":"pontos"}'); end if;
+    foreach k in array array['aula', 'avaliacao', 'notaMaxima', 'curso', 'desafio', 'kaizenIdeia', 'kaizen', 'diagnostico'] loop
+        continue when not (p_valores ? k);
+        -- Primeiro o formato, depois o valor (assim o ::int nunca recebe texto que não é número).
+        if not coalesce(p_valores ->> k ~ '^[0-9]{1,4}$', false) then perform _erro('validacao', jsonb_build_object(k, 'pontos')); end if;
+        if (p_valores ->> k)::int > 1000 then perform _erro('validacao', jsonb_build_object(k, 'pontos')); end if;
+        v_saida := v_saida || jsonb_build_object(k, (p_valores ->> k)::int);
+    end loop;
+    update empresas set pontuacao = v_saida where id = e.id returning * into e;
+    perform _registrar('empresa.pontuacao', v_eu, e.id, e.nome);
+    return jsonb_build_object('id', e.id, 'pontuacao', e.pontuacao);
 end $$;
 
 -- ---------------------------------------------- RPC: cultura e maturidade --
@@ -1999,7 +2170,7 @@ to authenticated;
 
 grant execute on function
     public.listar_empresas_publicas(), public.obter_empresa_publica(text), public.obter_convite(text),
-    public.enviar_solicitacao(text, text, text, text), public.validar_certificado(text)
+    public.enviar_solicitacao(text, text, text, text), public.validar_certificado(text), public.obter_configuracao()
 to anon, authenticated;
 
 grant execute on function
@@ -2019,7 +2190,9 @@ grant execute on function
     public.listar_kaizens(uuid), public.obter_kaizen(uuid), public.colegas(uuid), public.salvar_kaizen(jsonb),
     public.mover_kaizen(uuid, text), public.comentar_kaizen(uuid, text), public.parecer_kaizen(uuid, text, boolean),
     public.pedir_avanco_kaizen(uuid), public.recusar_pedido_kaizen(uuid, text),
-    public.liberar_resultado_diagnostico(uuid, text), public.salvar_acao_cultura(jsonb), public.excluir_acao_cultura(uuid)
+    public.liberar_resultado_diagnostico(uuid, text), public.salvar_acao_cultura(jsonb), public.excluir_acao_cultura(uuid),
+    public.cadastrar_colaborador(jsonb), public.redefinir_senha_colaborador(uuid, text), public.salvar_pontuacao(uuid, jsonb),
+    public.salvar_configuracao(jsonb)
 to authenticated;
 
 -- =============================================================================
